@@ -1,0 +1,126 @@
+﻿function textCounter(textareaName, countName, maxlimit) {
+    var field = document.getElementById(textareaName);
+    var countfield = document.getElementById(countName);
+    if (field.value.length > maxlimit) {
+        field.value = field.value.substring(0, maxlimit);
+    }
+    else
+        countfield.innerHTML = maxlimit - field.value.length;
+}
+
+function ChangeText(textName, field) {    
+    document.getElementById(textName).value += ' ' + field.innerHTML;
+}
+
+
+function SetText(textName, content) {
+    var obj = document.getElementById(textName);
+    obj.value = content;
+    obj.focus();
+}
+
+function selectAll(obj,selectAllID) {
+    var controls = document.getElementById(obj).getElementsByTagName("input");
+    for (var i = 0; i < controls.length; i++) {
+        if (controls[i].type == "checkbox") {
+            controls[i].checked = document.getElementById(selectAllID).checked;
+        }
+    }
+}
+
+function showDiv(divID) {
+    var a = document.getElementById(divID);
+    a.style.display = (a.style.display == "none" ? "" : "none");
+}
+
+function toggle(controlID) {    
+    $('#'+controlID).toggle();
+}
+
+function changeDivColor(divID) {
+    var div = document.getElementById(divID);
+    div.className = (div.className == "messageheader" ? "messageheaderclick" : "messageheader");
+}
+
+function clickButton(e, buttonid) {
+    var evt = e ? e : window.event;
+    var bt = document.getElementById(buttonid);
+    if (bt) {
+        if (evt.keyCode == 13) {
+            bt.click();
+            return false;
+        }
+    }
+}
+
+function clickButtonAndClearText(e, buttonid,textid) {
+    var evt = e ? e : window.event;
+    var bt = document.getElementById(buttonid);
+    var txt = document.getElementById(textid);
+    if (bt) {
+        if (evt.keyCode == 13) {
+            bt.click();
+            txt.value = '';
+            return false;
+        }
+    }
+}
+
+function BindControlEvents() {
+
+
+    $(".j_nickname").mouseenter(function () {
+        $(this).parent().parent().find(".action").show();
+    });
+
+
+    $(".media").mouseleave(function () {
+        $(this).find(".action").hide();
+    });
+
+    $(".atuser").click(function () {
+        var user = $(this).attr("data-user");
+        var input = $(".tweetinput");
+        input.val("对@" + user + " 说：");
+        input.focus();
+        var tmpStr = input.val();
+        input.val('');
+        input.val(tmpStr);
+        $(document).scrollTop(0);
+    });
+}
+
+function pageLoad() {
+    BindControlEvents();
+}
+
+function inittags() {
+    var tags = new Bloodhound({
+        datumTokenizer: Bloodhound.tokenizers.whitespace,
+        queryTokenizer: Bloodhound.tokenizers.whitespace,
+        prefetch: {
+            url: '/bt/service.ashx?o=gettags'
+        }
+    });
+    tags.initialize();
+
+    $('.tagsinput').tagsinput({
+        trimValue: true,
+        maxChars: 10,
+        maxTags: 10,
+        confirmKeys: [13, 188, 32],
+        typeaheadjs: {
+            source: tags.ttAdapter()
+        },
+        tagClass:'tag-info'
+    });
+
+    $('#hottags-container>span,#mytags-container>span').hover(function () {
+        $(this).toggleClass('tag-success');
+    });
+
+    $('#hottags-container>span,#mytags-container>span').click(function () {
+        $('.tagsinput').tagsinput('add', $(this).text().trim());
+    });
+}
+
