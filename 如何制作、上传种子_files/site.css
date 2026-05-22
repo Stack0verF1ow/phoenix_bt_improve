@@ -1,0 +1,892 @@
+﻿html {
+    /*font-family: Helvetica, Tahoma, Arial, STXihei, "华文细黑", "Microsoft YaHei", "微软雅黑", sans-serif;*/
+    font-size: 14px;
+}
+
+
+/*主题颜色设置*/
+
+body {
+    background-color: #F5F8FA;
+/*    background-image: url('theme/shunian.fw.png'); */
+    background-size:cover;
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+}
+
+
+.container-white{
+    background-color: #ffffff;
+    border: 1px solid #d3e0e9;
+    border-radius: 0.25rem;
+    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.05);
+    padding: 1rem 1rem;
+    margin-bottom: 2rem;
+}
+
+.box-shadow {
+    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.05);
+}
+
+/*主题颜色设置*/
+
+.container {
+    
+}
+
+input.error {
+    border-color: red;
+}
+
+label.error {
+    color: red;
+}
+
+
+/* 登录页面的背景图片提供者介绍 */
+#authorinfo
+{
+	width: 400px;
+	margin:0 auto;
+	margin-top: 50px;
+	text-align:center;
+	color:#666666;	
+	display:none;
+}
+
+#contact
+{
+	margin:0 auto;
+	text-align:center;
+	border:1px dashed gray;
+}
+
+#chatcontent
+{
+	word-wrap:break-word;
+	word-break:break-all;	
+	white-space:-moz-pre-wrap;
+	white-space:normal;
+	line-height:180%;
+	overflow:auto;
+	margin-top:5px;
+}
+
+#helpcontent div:not(.container-white) {
+    -moz-border-bottom-colors: none;
+    -moz-border-left-colors: none;
+    -moz-border-right-colors: none;
+    -moz-border-top-colors: none;
+    border-color: #eee;
+    border-image: none;
+    border-radius: 0.25rem;
+    border-style: solid;
+    border-width: 1px 1px 1px 0.25rem;
+    margin-bottom: 1.25rem;
+    margin-top: 1.25rem;
+    padding: 1.25rem;
+    border-left-color: #5bc0de;
+}
+
+#helpcontent h5 {
+    color: #5bc0de;
+}
+
+#hottags-container>span,#mytags-container {
+    cursor: pointer;
+}
+
+#imageeditor
+{
+	width:80%;
+	margin:0 auto;
+}
+
+/* #模板页页脚 */
+#master_footer
+{
+	text-align:center;
+	word-spacing:6px;
+	margin: 25px auto;
+	background-color: #EAEAEA;	
+}
+
+/* 模板页题头 */
+#master_header
+{	
+	border-bottom:1px solid #f5f5f5;
+	margin-bottom: 25px;
+}
+
+#master_nav 
+{
+	margin: 0;
+	padding: 0;
+	background-image: url('../images/bg.png');
+	height: 32px;
+	border-bottom: 2px solid #ccc;
+}
+
+#master_nav .logo {
+	float: left;
+	background-color: #009FE1;
+	font-size: 150%;
+	line-height: 32px;
+	color: #fff;
+	font-weight: bold;
+	text-align: center;
+	font-family: '微软雅黑', arial;
+	width: 100px;
+}
+
+
+#site,#user
+{
+	margin: 0;
+}
+
+#site {
+	width: 300px;
+}
+
+#user {
+	width: 400px;
+}
+
+#site li,#user li {
+	display: inline;
+	list-style:none;
+	padding-right: 8px;
+	padding-left: 8px;
+	margin: 0;
+	height: 32px;
+	line-height: 32px;
+}
+
+#site a,#user a {
+	color: white;
+}
+	
+#site a:hover, #user a:hover
+{		
+	color: #FFBB00;
+}
+
+
+/* todo:被选中的效果 */
+
+
+
+#newmail
+{
+	padding:6px;
+	text-align:center;
+	width:250px;
+}
+
+#userinfo
+{	
+	float:right;	
+	width:300px;
+}
+
+#usermessage
+{	
+	width:630px;
+}
+
+#usercontent
+{
+	width:630px;
+}
+
+
+#setting
+{
+	width: 450px;
+	border: 2px solid #eee;
+	margin: 0 auto;
+	padding:9px;
+}
+
+
+#sidebar
+{
+	float:right;
+	width:310px;
+}
+
+.accordionHeader,.accordionHeaderSelected
+{
+	font-weight:bold;
+	text-decoration:underline;
+	cursor:pointer;
+	margin-bottom:9px;
+}
+
+.accordionContent
+{
+	padding:8px;
+}
+
+.accordionHeaderSelected
+{
+	color:Green;	
+}
+
+
+.align_center
+{
+	text-align:center;
+}
+
+.align_left
+{
+	text-align:left;
+}
+
+.align_right
+{
+	text-align:right;
+}
+
+.avatar-comment {
+    display: block;
+    width: 48px;
+    text-align: right;
+}
+
+.avatar-comment>img {
+    width: 36px;
+    border-radius: 36px;
+}
+
+.bg-dark {
+    background-color: black;
+}
+
+.bg-hottorrent {
+    background-color: #F2F7F6;
+}
+
+.bg-hotcomment {
+    background-color: #F0F3F5;
+}
+
+.bg-hot {
+    background-color: #F5F8FA;
+}
+
+.bigstar50, .bigstar45, .bigstar40, .bigstar35, .bigstar30, .bigstar25, .bigstar20, .bigstar15, .bigstar10, .bigstar05, .bigstar00
+{
+	-moz-background-clip: border;
+	-moz-background-inline-policy: continuous;
+	-moz-background-origin: padding;
+	background: transparent url(../images/all_bigstars.gif) no-repeat scroll 0 0;
+	color: #999999;
+	display: block;
+	font-size: 14px;
+	height: 14px;
+	line-height: 100%;
+	overflow: hidden;
+	width: 75px;
+}
+.bigstar50
+{
+	background-position: 0 0;
+}
+.bigstar45
+{
+	background-position: 0 -15px;
+}
+.bigstar40
+{
+	background-position: 0 -30px;
+}
+.bigstar35
+{
+	background-position: 0 -45px;
+}
+.bigstar30
+{
+	background-position: 0 -60px;
+}
+.bigstar25
+{
+	background-position: 0 -75px;
+}
+.bigstar20
+{
+	background-position: 0 -90px;
+}
+.bigstar15
+{
+	background-position: 0 -105px;
+}
+.bigstar10
+{
+	background-position: 0 -120px;
+}
+.bigstar05
+{
+	background-position: 0 -135px;
+}
+.bigstar00
+{
+	background-position: 0 -150px;
+}
+
+.bootstrap-tagsinput {
+    width: 100%;
+}
+
+
+.CustomComboBoxStyle .ajax__combobox_buttoncontainer button {
+	background-color: #ADD8E6;
+	border: solid 1px Blue;    
+}
+
+.comment
+{
+	margin-left:60px;		
+}
+
+.cursor-pointer {
+    cursor: pointer;
+}
+
+.div2table
+{
+	display:table;
+}
+
+.div2cell
+{
+	display:table-cell;
+	vertical-align:middle;
+}
+
+.double-border {
+ border: 5px solid #ddd;
+ padding: 5px; /*Inner border size*/
+ background: #fff; /*Inner border color*/
+}
+
+.emo {
+    margin: 0.1rem;
+    max-height: 60px;
+}
+.errorinfo
+{
+	text-align:center;
+	color:Red;
+}
+
+.emptyRatingStar 
+{
+	vertical-align:middle;
+	background-image: url(../Images/EmptyStar.png);
+}
+
+.filledRatingStar 
+{
+	vertical-align:middle;
+	background-image: url(../Images/FilledStar.png);
+
+}
+
+
+.fright
+{
+	float:right;
+	width:49%;
+}
+
+.fleft
+{
+	width:49%;
+}
+
+.floatleft
+{
+	float:left;
+}
+
+.floatright
+{
+	float:right;
+}
+
+.gridtitle
+{
+	text-align: left; 
+	font-weight: bold; 
+	padding-bottom:9px;
+}
+
+.gridview_hover
+{
+	background-color:#DAECF6;
+}
+
+.gridview_header
+{
+	background-color: #F5F5DC;
+}
+
+.gridview_rowselected
+{
+	background-color:#CFDFEC;
+}
+
+.gridview_itemrow
+{
+	background-color:White;
+}
+
+.gridview_itemrow:hover
+{
+	background-color:#DAECF6;
+}
+
+.gridview_alterrow
+{ 
+	background-color:#f2f4f3;
+}
+
+.gridview_alterrow:hover
+{
+	background-color:#DAECF6;
+}
+
+.hide
+{
+	display:none;		
+}
+
+.hr
+{
+	height: 0;
+	position: absolute;	
+	width: 100%;
+	border-top: 1px solid #c9d7f1;
+	font-size: 1px;
+}
+
+.imdbdownload
+{
+}
+
+.imdbdownload div
+{
+	border-bottom:1px dashed gray;
+	padding:3px;
+}
+
+.mb-5px {
+    margin-bottom: 5px;
+}
+
+.mt-25 {
+    margin-top: 2rem;
+}
+
+.media-left>a>img,.avatar {
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+}
+
+
+.messagenotread
+{
+	font-weight:bold;
+}
+
+.messageread
+{
+}
+
+
+.messagereplycontent
+{
+	color:Gray;
+}
+
+.noborder {
+    border: 0;
+}
+
+.noborder td,.noborder th {
+    border: 0;
+}
+
+.noscroll
+{
+	font-size:small;
+	overflow:hidden;
+}
+
+
+.p-title {
+    padding: 0.6rem 0.6rem;
+}
+
+.pages {  color: #999;overflow: auto;}
+.pages a, .pages .cpb { text-decoration:none;float: left; padding: 0 5px; border: 1px solid #ddd;background: #fff;margin:0 2px; color:#000;}
+.pages a:hover { background-color: #E61636; color:#fff;border:1px solid #E61636; text-decoration:none;}
+.pages .cpb { font-weight: bold; color: #fff; background: #E61636; border:1px solid #E61636;}
+
+
+.quotel
+{
+	background: url("../images/quotel.gif") no-repeat scroll left 4px transparent;
+	margin: 8px 0 0 5px;
+	overflow: hidden;
+	padding:3px 24px 5px 15px;
+	width: auto;
+	word-wrap: break-word;
+}
+
+.quoter
+{
+	background: url("../images/quoter.gif") no-repeat scroll right bottom transparent;
+	color: #333333;
+	display: inline-block;
+	padding-right: 15px;
+}
+
+.ratingStar {
+	font-size: 0pt;
+	width: 13px;
+	height: 25px;
+	margin: 0px;
+	padding: 0px;
+	cursor: pointer;
+	display: block;
+	background-repeat: no-repeat;
+}
+
+.reviewtitle
+{
+	background-color: #DDFF77;
+	padding:2px;
+}
+
+.roundcorner
+{
+	-webkit-border-radius: 5px;
+	-moz-border-radius: 5px;
+}
+
+.separator
+{
+	border-bottom:1px solid #E6E6E6;	
+}
+
+.savedRatingStar 
+{
+	vertical-align:middle;
+	background-image: url(../Images/SavedStar.png);
+}
+
+.smaller {
+    font-size: 60%;
+}
+
+.smile {
+    margin: 0.3rem;
+    cursor: pointer;
+    border: 1px solid transparent;
+}
+
+.smile:hover {
+    border: 1px solid gray;
+}
+
+.stars
+{
+	-moz-background-clip: border;
+	-moz-background-inline-policy: continuous;
+	-moz-background-origin: padding;
+	background: transparent url(../images/stars.gif) repeat scroll 0 0;
+	display: inline-block;
+	height: 14px;
+	margin: 1px 0 0 7px;
+	width: 50px;
+}
+
+.stars4
+{
+	background-position: left 61px;
+}
+.stars3
+{
+	background-position: left 45px;
+}
+.stars2
+{
+	background-position: left 30px;
+}
+.stars1
+{
+	background-position: left 15px;
+}
+
+.stat_num
+{
+
+}
+
+.stat_num ul
+{
+	margin: 0 auto;
+	width: 200px;
+	list-style: none outside none;
+}
+
+.stat_num h3
+{
+	font-size: 14px;
+	height: 28px;
+	margin: 12px 0 0 0;
+	text-align: center;
+}
+
+.stat_num li
+{
+	background: url("../images/stat_num_bg.gif") no-repeat scroll 0 0 transparent;
+	float: left;
+	height: 68px;
+	margin: 0 10px;
+	width: 64px;
+	padding-left:3px;
+}
+
+
+
+/* TagCloud
+----------------------------------------------------------*/
+
+.TagCloud			/* Applies to the entire tag cloud */
+{
+    font-family: '微软雅黑', '黑体', '宋体';
+}
+
+.TagCloud > span	/* Applies to each tag of the tag cloud */
+{
+	margin-right:3px;
+	text-align:center;
+}
+
+.TagCloud  a:hover
+{
+	
+}
+
+.TagCloud > span.TagWeight1 > a	/* Applies to the largest tags */
+{
+	color:#D9534F;
+	font-size:1.9em;
+}
+
+.TagCloud > span.TagWeight2 > a
+{
+	color:#5CB85C;
+	font-size:1.5em;
+}
+
+    .TagCloud > span.TagWeight3 > a {
+        color: #5CB85C;
+        font-size: 1.4em;
+    }
+
+.TagCloud > span.TagWeight4 > a
+{
+	color:#0275D8;
+	font-size:1.2em;
+}
+
+.TagCloud > span.TagWeight5 > a	/* Applies to the smallest tags */
+{
+	color:#0275D8;
+}
+
+
+
+.text-primary
+{
+	color: #656c74;
+}
+
+.text-secondary
+{
+	color: #a3a3a3;
+}
+
+.text-wrap {
+    word-break: break-all;
+}
+
+.time {
+	color: #6CBAE4;
+}
+
+.title
+{
+	padding:3px;
+	line-height:150%;
+	margin-bottom:9px;	
+	background-color:#EEFFEE;	
+}
+
+.torrentupload
+{
+	list-style-image:url('../images/16x16/Harddisk.png');			
+	margin:8px 0;
+	padding:0;
+}
+
+.torrentupload li
+{
+	padding:4px 0;
+	border-bottom:1px dashed #ddd;
+}
+
+
+.tweet_content
+{
+	font-size: 110%;	
+}
+
+.tweet_source {
+	color: #9A9A9A;
+}
+
+.tweeter {
+	font-weight: bold;
+}
+
+.tweeter a {
+	color: black;
+}
+
+.tweeter a:hover {
+	color: #0A8CD2;
+}
+
+.userlist
+{
+	margin:0;
+	padding:0;
+}
+
+.userlist td,.userlist div
+{
+	margin: 0;
+	padding:0px;
+	width:68px;
+	text-align:center;
+    vertical-align: top;
+}
+
+
+.userrelated
+{
+	list-style:none;	
+	padding:0;
+	margin:0;
+}
+
+.userrelated li
+{
+	padding:0;
+	margin:0;
+	padding-bottom:2px;
+	margin-left:56px;
+}
+
+.userrelated .userface
+{
+	float:left;
+	padding-right:8px;
+	margin-left:0;
+}
+	
+.usercomment {
+	min-height: 40px;
+}
+
+.validatorCallout div, 
+.validatorCallout td { 
+	border:solid 1px gray; background-color: lemonchiffon; 
+	font-size:small;
+}
+
+.validatorCalloutHighlight
+{
+	background-color:lemonchiffon;
+}
+
+
+.valign_reset
+{
+	
+}
+
+.valign_reset td
+{
+	vertical-align:top;
+}	
+
+
+/* div垂直居中，使用时outer需增加height属性
+http://www.jakpsatweb.cz/css/css-vertical-center-solution.html
+ */
+#vertical_outer {height:50px; overflow: hidden; position: relative;}
+#vertical_outer[id] {display: table; position: static;}
+
+#vertical_middle {position: absolute; top: 50%;} /* for explorer only*/
+#vertical_middle[id] {display: table-cell; vertical-align: middle; width: 100%;}
+
+#vertical_inner {position: relative; top: -50%} /* for explorer only */
+/* optional: #inner[id] {position: static;} */
+
+.w-33 {
+    width: 33.3%;
+}
+
+.w-50 {
+    width: 50%;
+}
+
+.w-60px {
+    width: 60px;
+}
+
+.wordbreak
+{
+	word-wrap:break-word;
+	word-break:break-all;	
+	white-space:-moz-pre-wrap;
+	white-space:normal;
+	overflow:hidden;
+    overflow-wrap: break-word;
+}
+
+.wordspacing
+{
+	word-spacing:4px;
+}
+
+.wordspacing_2
+{
+	word-spacing:8px;
+}
+
+.wraper
+{	
+	border:1px solid #DDDDDD;	
+	background-color:#fff;
+	margin: 0 auto 24px auto;
+	min-height: 500px;
+	padding-top: 10px;
+}
