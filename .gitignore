@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+.build-venv/
+venv/
+env/
+ENV/
+
+# Build and packaging
+build/
+dist/
+*.egg-info/
+*.spec
+
+# PySide / Qt
+*.qmlc
+*.jsc
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+config.local.*
+settings.local.*
+secrets.*
+credentials.*
+cookies.*
+!src/**/cookies.py
+*.cookie
+*.cookies
+
+# Logs and runtime state
+logs/
+*.log
+*.tmp
+*.temp
+.cache/
+
+# Local torrent workflow artifacts
+downloads/
+seed-data/
+torrents/generated/
+torrents/final/
+*.resume
+*.fastresume
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
