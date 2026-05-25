@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
-import uuid
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
@@ -30,6 +28,9 @@ class PhoenixClient:
     def __init__(self, config: AppConfig, session: requests.Session | None = None) -> None:
         self.config = config
         self.session = session or requests.Session()
+        self.session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+        })
         if config.cookie_header:
             self.session.headers.update({"Cookie": config.cookie_header})
 
@@ -62,14 +63,20 @@ class PhoenixClient:
         torrent_bytes = torrent_path.read_bytes()
         LOGGER.info("Torrent file: %s (%d bytes)", torrent_path.name, len(torrent_bytes))
 
-        body, content_type = _build_multipart(data, upload_form.file_field, torrent_path.name, torrent_bytes)
-        LOGGER.info("Multipart body size: %d bytes, Content-Type: %s", len(body), content_type)
-        self._save_debug_bytes(body, "upload_request_body.bin")
+        files = {
+            upload_form.file_field: (torrent_path.name, torrent_bytes, "application/x-bittorrent"),
+        }
+        LOGGER.info("POST fields: %d, file field: %s", len(data), upload_form.file_field)
 
+        headers = {
+            "Referer": self.config.upload_url,
+            "Origin": self.config.site_base_url,
+        }
         response = self.session.post(
             post_url,
-            data=body,
-            headers={"Content-Type": content_type},
+            data=data,
+            files=files,
+            headers=headers,
             timeout=60,
         )
         response.raise_for_status()
@@ -117,6 +124,25 @@ class PhoenixClient:
 
         return UploadResult(True, "上传完成", detail_url=detail_url, torrent_url=torrent_url)
 
+    def fetch_torrent_url_from_detail(self, detail_url: str) -> str:
+        """Fetch the detail page and extract the torrent download URL."""
+        LOGGER.info("Fetching detail page: %s", detail_url)
+        response = self.session.get(detail_url, timeout=20)
+        response.raise_for_status()
+        LOGGER.info("Detail page status=%d, url=%s", response.status_code, response.url)
+        self._save_debug_html(response.text, "detail_response.html")
+
+        if _is_error_url(response.url):
+            error = self._fetch_error_page_message(response.url) or "详情页返回了错误。"
+            raise PhoenixClientError(error)
+
+        torrent_url = find_torrent_url(response.text, detail_url)
+        if torrent_url:
+            LOGGER.info("Found torrent URL: %s", torrent_url)
+        else:
+            LOGGER.warning("No torrent URL found on detail page")
+        return torrent_url
+
     def download_final_torrent(self, torrent_url: str, title: str, save_dir: Path | None = None) -> Path:
         if not torrent_url:
             raise PhoenixClientError("final torrent URL is empty")
@@ -163,40 +189,6 @@ class PhoenixClient:
         except Exception:
             LOGGER.exception("Failed to save debug HTML %s", filename)
 
-    def _save_debug_bytes(self, data: bytes, filename: str) -> None:
-        try:
-            self.config.temp_dir.mkdir(parents=True, exist_ok=True)
-            path = self.config.temp_dir / filename
-            path.write_bytes(data)
-            LOGGER.info("Debug binary saved: %s (%d bytes)", path, len(data))
-        except Exception:
-            LOGGER.exception("Failed to save debug binary %s", filename)
-
-
-def _build_multipart(
-    fields: dict[str, str],
-    file_field_name: str,
-    file_name: str,
-    file_bytes: bytes,
-) -> tuple[bytes, str]:
-    boundary = uuid.uuid4().hex
-    lines: list[bytes] = []
-    for name, value in fields.items():
-        lines.append(f"--{boundary}\r\n".encode())
-        lines.append(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode())
-        lines.append(value.encode("utf-8"))
-        lines.append(b"\r\n")
-    lines.append(f"--{boundary}\r\n".encode())
-    lines.append(
-        f'Content-Disposition: form-data; name="{file_field_name}"; filename="{file_name}"\r\n'
-        f"Content-Type: application/x-bittorrent\r\n\r\n".encode()
-    )
-    lines.append(file_bytes)
-    lines.append(b"\r\n")
-    lines.append(f"--{boundary}--\r\n".encode())
-    body = b"".join(lines)
-    content_type = f"multipart/form-data; boundary={boundary}"
-    return body, content_type
 
 
 def _same_url(left: str, right: str) -> bool:
