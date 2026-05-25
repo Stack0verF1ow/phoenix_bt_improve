@@ -43,6 +43,8 @@ def main() -> int:
         f"{ROOT / 'scripts' / 'browser_upload.py'}{os.pathsep}scripts",
         "--add-data",
         f"{ROOT / 'scripts' / 'browser_login.py'}{os.pathsep}scripts",
+        "--add-data",
+        f"{ROOT / 'scripts' / 'fetch_quota.py'}{os.pathsep}scripts",
         "--exclude-module",
         "cryptography",
         "--exclude-module",

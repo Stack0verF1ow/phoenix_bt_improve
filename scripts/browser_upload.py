@@ -13,6 +13,8 @@ from pathlib import Path
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.edge.options import Options as EdgeOptions
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 
 def main() -> int:
@@ -52,24 +54,38 @@ def main() -> int:
         driver.set_window_size(1280, 900)
 
     try:
-        # Check login status
-        if not _check_login(driver, upload_url):
+        # Navigate directly to upload page (also checks login)
+        print("正在打开上传页面...", file=sys.stderr)
+        driver.get(upload_url)
+        _dismiss_alerts(driver)
+
+        # Quick login check - if redirected to login page, fail
+        if "login" in driver.current_url.lower():
             print("ERROR: 未登录，请先配置登录凭证。", file=sys.stderr)
             return 1
 
+        page_src = driver.page_source.lower()
+        if not any(ind in page_src for ind in ["logout", "退出", "注销", "登出", "个人信息", "my profile"]):
+            print("WARNING: 未检测到登录标识，继续尝试...", file=sys.stderr)
+
         print("已登录，开始上传...", file=sys.stderr)
 
+        # Extract daily upload quota
+        quota_text = driver.execute_script("""
+            var el = document.getElementById('cpContent__cphContent_lblCountUpload');
+            return el ? el.textContent.trim() : '';
+        """)
+        if quota_text:
+            print(f"今日剩余上传次数: {quota_text}", file=sys.stderr)
+
         # Dismiss agreement overlay if present
-        print("检查协议弹窗...", file=sys.stderr)
         driver.execute_script("""
-            // Click agree button if visible
             var agree = document.getElementById('agree');
             if (agree) agree.click();
-            // Ensure upload section is visible
             var upload = document.getElementById('upload');
             if (upload) upload.style.display = 'block';
         """)
-        time.sleep(0.5)
+        time.sleep(0.3)
 
         # Fill form fields using jQuery (required for jQuery Validate)
         title = args["title"]
@@ -83,29 +99,23 @@ def main() -> int:
             var title = arguments[0], subtitle = arguments[1], desc = arguments[2];
             var cat = arguments[3], tagStr = arguments[4];
 
-            // Use jQuery .val() so jQuery Validate can read the values
             var $ = window.jQuery;
             if (!$) return 'no jQuery';
 
             var ok = 0;
 
-            // Title (required)
             var $name = $('[name$="txtName"]').not('[name$="txtNameExtra"]');
             if ($name.length) { $name.val(title).trigger('input').trigger('change'); ok++; }
 
-            // Subtitle
             var $extra = $('[name$="txtNameExtra"]');
             if ($extra.length) { $extra.val(subtitle).trigger('input').trigger('change'); ok++; }
 
-            // Description (required)
             var $desc = $('[name$="txtDescription"]');
             if ($desc.length) { $desc.val(desc).trigger('input').trigger('change'); ok++; }
 
-            // Category
             var $cat = $('[name$="ddlCategory"]');
             if ($cat.length) { $cat.val(cat).trigger('change'); ok++; }
 
-            // Tags - use bootstrap-tagsinput plugin API
             var $tags = $('[name$="txtTags"]');
             if ($tags.length && tagStr) {
                 var tagList = tagStr.split(/\\s+/).filter(function(t) { return t.length > 0; });
@@ -121,7 +131,6 @@ def main() -> int:
 
         # Upload torrent file
         print("正在上传种子文件...", file=sys.stderr)
-        # List all file inputs for debugging
         all_file_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='file']")
         print(f"找到 {len(all_file_inputs)} 个文件上传控件", file=sys.stderr)
         for idx, fi in enumerate(all_file_inputs):
@@ -134,7 +143,6 @@ def main() -> int:
             return 1
 
         file_input = file_inputs[0]
-        # Make the file input interactable
         driver.execute_script("""
             var el = arguments[0];
             el.style.display='block'; el.style.visibility='visible';
@@ -142,39 +150,36 @@ def main() -> int:
             el.style.width='auto'; el.style.height='auto';
             el.removeAttribute('disabled');
         """, file_input)
-        time.sleep(0.5)
-        # Use forward slashes for send_keys compatibility
+        time.sleep(0.3)
         abs_path = str(Path(torrent_path).resolve()).replace("\\", "/")
         print(f"上传文件路径: {abs_path}", file=sys.stderr)
         file_input.send_keys(abs_path)
-        time.sleep(1)
-        # Verify file was attached
-        file_value = file_input.get_attribute("value") or ""
-        print(f"文件控件值: {file_value}", file=sys.stderr)
-        if not file_value:
-            print("WARNING: 文件可能未成功附加", file=sys.stderr)
+        time.sleep(0.5)
 
-        # Click submit (use specific selector to avoid search button)
+        # Click submit
         print("正在提交...", file=sys.stderr)
         _dismiss_alerts(driver)
         submit_btn = driver.execute_script("""
-            // Find the upload button specifically, not the search button
             var btn = document.querySelector('[name$="btnUpload"]');
             if (!btn) btn = document.querySelector('#upload input[type="submit"]');
             return btn;
         """)
         if submit_btn:
             driver.execute_script("arguments[0].scrollIntoView(true);", submit_btn)
-            time.sleep(0.5)
+            time.sleep(0.3)
             driver.execute_script("$(arguments[0]).click();", submit_btn)
         else:
             print("ERROR: 找不到提交按钮", file=sys.stderr)
             return 1
 
-        # Wait for response
+        # Wait for page navigation after submit
         print("等待服务器响应...", file=sys.stderr)
-        time.sleep(5)
+        try:
+            WebDriverWait(driver, 15).until(EC.staleness_of(submit_btn))
+        except Exception:
+            pass
         _dismiss_alerts(driver)
+        time.sleep(1)
 
         current_url = driver.current_url
         print(f"提交后页面: {current_url}", file=sys.stderr)
@@ -183,7 +188,7 @@ def main() -> int:
             print("ERROR: 服务器返回错误页面", file=sys.stderr)
             return 1
 
-        # Find detail page
+        # Find detail page URL
         detail_url = current_url if "detail" in current_url.lower() else ""
         if not detail_url:
             try:
@@ -198,10 +203,13 @@ def main() -> int:
 
         print(f"详情页: {detail_url}", file=sys.stderr)
 
-        # Navigate to detail page for download link
+        # Navigate to detail page if needed
         if driver.current_url != detail_url:
             driver.get(detail_url)
-            time.sleep(3)
+            try:
+                WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, "a[href]")))
+            except Exception:
+                pass
 
         # Find torrent download link
         torrent_download_url = ""
@@ -220,34 +228,49 @@ def main() -> int:
 
         print(f"种子下载链接: {torrent_download_url}", file=sys.stderr)
 
-        # Download torrent using Selenium's authenticated session via fetch API
-        # urllib can't download because it doesn't have the login cookies
-        print("正在通过浏览器下载种子...", file=sys.stderr)
-        torrent_b64 = driver.execute_script("""
-            var url = arguments[0];
-            return fetch(url).then(function(r) { return r.blob(); })
-                .then(function(blob) {
-                    return new Promise(function(resolve) {
-                        var reader = new FileReader();
-                        reader.onloadend = function() { resolve(reader.result); };
-                        reader.readAsDataURL(blob);
-                    });
-                });
-        """, torrent_download_url)
+        # Download torrent using requests + Selenium cookies (faster than fetch+base64)
+        print("正在下载种子...", file=sys.stderr)
+        cookies = driver.get_cookies()
+        # Cache cookies for fast quota checks
+        if profile_dir:
+            import json as _json
+            try:
+                Path(profile_dir, "cookies.json").write_text(
+                    _json.dumps(cookies, ensure_ascii=False), encoding="utf-8"
+                )
+            except Exception:
+                pass
+        import requests as req
+        session = req.Session()
+        for c in cookies:
+            session.cookies.set(c["name"], c["value"], domain=c.get("domain", ""))
 
-        if not torrent_b64 or not torrent_b64.startswith("data:"):
-            print("ERROR: 种子下载失败", file=sys.stderr)
-            return 1
+        resp = session.get(torrent_download_url, timeout=30)
+        torrent_bytes = resp.content
 
-        # Decode base64 data
-        import base64
-        # Strip "data:application/x-bittorrent;base64," prefix
-        b64_data = torrent_b64.split(",", 1)[1] if "," in torrent_b64 else torrent_b64
-        torrent_bytes = base64.b64decode(b64_data)
-
-        # Verify it's a valid torrent (bencode starts with 'd')
         if not torrent_bytes or torrent_bytes[0:1] != b'd':
             print(f"WARNING: 下载的内容可能不是种子文件 (前10字节: {torrent_bytes[:10]})", file=sys.stderr)
+            # Fallback: try fetch via Selenium
+            print("尝试通过浏览器下载...", file=sys.stderr)
+            torrent_b64 = driver.execute_script("""
+                var url = arguments[0];
+                return fetch(url).then(function(r) { return r.blob(); })
+                    .then(function(blob) {
+                        return new Promise(function(resolve) {
+                            var reader = new FileReader();
+                            reader.onloadend = function() { resolve(reader.result); };
+                            reader.readAsDataURL(blob);
+                        });
+                    });
+            """, torrent_download_url)
+            if torrent_b64 and torrent_b64.startswith("data:"):
+                import base64
+                b64_data = torrent_b64.split(",", 1)[1] if "," in torrent_b64 else torrent_b64
+                torrent_bytes = base64.b64decode(b64_data)
+
+        if not torrent_bytes or torrent_bytes[0:1] != b'd':
+            print("ERROR: 种子下载失败", file=sys.stderr)
+            return 1
 
         # Save to temp file
         import tempfile
@@ -256,9 +279,11 @@ def main() -> int:
         tmp.close()
         print(f"种子已保存到: {tmp.name} ({len(torrent_bytes)} bytes)", file=sys.stderr)
 
-        # Output: line 1 = detail_url, line 2 = saved torrent path
+        # Output: line 1 = detail_url, line 2 = saved torrent path, line 3 = remaining quota
         print(detail_url)
         print(tmp.name)
+        if quota_text:
+            print(f"quota:{quota_text}")
         print("SUCCESS: 上传成功", file=sys.stderr)
         return 0
 
@@ -297,28 +322,13 @@ def _parse_args() -> dict:
     return kwargs
 
 
-def _check_login(driver: webdriver.Edge, upload_url: str) -> bool:
-    """Check if logged in to the site."""
-    driver.get(upload_url)
-    time.sleep(3)
-    _dismiss_alerts(driver)
-
-    current_url = driver.current_url.lower()
-    if "login" in current_url:
-        return False
-
-    page_source = driver.page_source.lower()
-    indicators = ["logout", "退出", "注销", "登出", "个人信息", "my profile"]
-    return any(ind in page_source for ind in indicators)
-
-
 def _dismiss_alerts(driver: webdriver.Edge) -> None:
     for _ in range(3):
         try:
             alert = driver.switch_to.alert
             print(f"关闭弹窗: {alert.text[:50]}", file=sys.stderr)
             alert.dismiss()
-            time.sleep(0.5)
+            time.sleep(0.3)
         except Exception:
             break
 
