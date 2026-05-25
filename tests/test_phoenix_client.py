@@ -18,6 +18,7 @@ UPLOAD_HTML = """
     <option value="1" selected>软件</option>
   </select>
   <input id="ctl00_cpContent_txtTags" name="ctl00$cpContent$txtTags" />
+  <input type="hidden" id="ctl00_cpContent_hfFid" name="ctl00$cpContent$hfFid" value="0" />
   <input type="file" id="ctl00_cpContent_fuFile" name="ctl00$cpContent$fuFile" />
   <input type="submit" id="ctl00_cpContent_btnUpload" name="ctl00$cpContent$btnUpload" />
 </form>
@@ -30,6 +31,7 @@ class FakeResponse:
         self.url = url
         self.content = content
         self.status_code = status_code
+        self.headers: dict[str, str] = {}
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
@@ -47,7 +49,7 @@ class FakeSession:
         if url.endswith("/BT/upload.aspx"):
             return FakeResponse(UPLOAD_HTML, url)
         if url.endswith("/BT/detail.aspx?id=42"):
-            return FakeResponse('<a href="/BT/download.aspx?id=42">下载种子</a>', url)
+            return FakeResponse('<a href="/BT/download.ashx?id=42"><i class="fa fa-download"></i>下载种子</a>', url)
         raise AssertionError(f"unexpected GET {url}")
 
     def post(self, url: str, **kwargs: Any) -> FakeResponse:
@@ -65,7 +67,7 @@ def test_upload_torrent_follows_detail_page_for_final_torrent(tmp_path: Path) ->
 
     assert result.success is True
     assert result.detail_url == "http://phoenix.stu.edu.cn/BT/detail.aspx?id=42"
-    assert result.torrent_url == "http://phoenix.stu.edu.cn/BT/download.aspx?id=42"
+    assert result.torrent_url == "http://phoenix.stu.edu.cn/BT/download.ashx?id=42"
     assert session.get_urls == [
         "http://phoenix.stu.edu.cn/BT/upload.aspx",
         "http://phoenix.stu.edu.cn/BT/detail.aspx?id=42",

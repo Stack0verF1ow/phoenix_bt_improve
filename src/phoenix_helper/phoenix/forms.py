@@ -71,6 +71,7 @@ def parse_upload_form(html: str, base_url: str = "") -> UploadForm:
         file_field=_find_field(form, "input", "fuFile"),
         category_field=_find_field(form, "select", "ddlCategory"),
         tags_field=_find_optional_field(form, "input", "txtTags"),
+        tags_fid_field=_find_optional_field(form, "input", "hfFid"),
         submit_field=_find_optional_field(form, "input", "btnUpload"),
     )
 

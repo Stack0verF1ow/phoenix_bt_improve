@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-import base64
+import logging
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urljoin
 
 import requests
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,24 +30,29 @@ class UTorrentClient:
         if config.username or config.password:
             self.session.auth = (config.username, config.password)
 
-    def open_torrent(self, torrent_path: Path) -> None:
+    def open_torrent(self, torrent_path: Path, save_path: Path | None = None) -> None:
         torrent_path = torrent_path.expanduser().resolve()
         if self.config.executable:
-            subprocess.Popen([self.config.executable, str(torrent_path)])
+            cmd = [self.config.executable]
+            if save_path is not None:
+                cmd.extend(["/DIRECTORY", str(save_path.expanduser().resolve())])
+            cmd.append(str(torrent_path))
+            LOGGER.info("Launching µTorrent: %s", cmd)
+            subprocess.Popen(cmd)
             return
         subprocess.Popen([str(torrent_path)], shell=True)
 
-    def add_torrent_via_webui(self, torrent_path: Path, save_path: Path | None = None) -> None:
+    def add_torrent_via_webui(self, torrent_path: Path) -> None:
         token = self._get_token()
         params = {"action": "add-file", "token": token}
-        if save_path is not None:
-            params["download_dir"] = str(save_path.expanduser().resolve())
 
-        with torrent_path.expanduser().resolve().open("rb") as torrent_file:
+        torrent_path_resolved = torrent_path.expanduser().resolve()
+        with torrent_path_resolved.open("rb") as torrent_file:
             files = {"torrent_file": (torrent_path.name, torrent_file, "application/x-bittorrent")}
             response = self.session.post(self._url(""), params=params, files=files, timeout=30)
         if response.status_code >= 400:
             raise UTorrentClientError(f"µTorrent WebUI add-file failed: HTTP {response.status_code}")
+        LOGGER.info("µTorrent add-file response: %s", response.text[:500])
 
     def check_webui(self) -> None:
         self._get_token()

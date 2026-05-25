@@ -36,6 +36,7 @@ from phoenix_helper.phoenix.discovery import discover_tracker_from_default_sampl
 from phoenix_helper.torrent.creator import create_torrent, recommended_piece_length
 from phoenix_helper.utils.paths import safe_filename, unique_path
 from phoenix_helper.ui.login_dialog import LoginDialog
+from phoenix_helper.ui.upload_dialog import UploadDialog
 from phoenix_helper.ui.widgets import LogBox
 
 CATEGORIES = [
@@ -52,17 +53,16 @@ CATEGORIES = [
 LOGGER = logging.getLogger(__name__)
 
 
-class SeedWorker(QThread):
+class CreateTorrentWorker(QThread):
     log = Signal(str)
     progress = Signal(int)
-    finished_ok = Signal(str)
+    torrent_ready = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, config: AppConfig, draft: ResourceDraft, use_webui: bool) -> None:
+    def __init__(self, config: AppConfig, draft: ResourceDraft) -> None:
         super().__init__()
         self.config = config
         self.draft = draft
-        self.use_webui = use_webui
 
     def run(self) -> None:
         try:
@@ -82,20 +82,36 @@ class SeedWorker(QThread):
                 piece_length=piece_length,
                 progress=on_progress,
             )
-            self.log.emit("种子生成完成，开始上传站点。")
+            self.log.emit("种子生成完成。")
+            self.torrent_ready.emit(str(torrent_path))
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
-            client = PhoenixClient(self.config)
-            result = client.upload_torrent(self.draft, torrent_path)
-            if not result.success:
-                raise RuntimeError(result.message)
-            self.log.emit(result.message)
 
-            final_torrent_path = torrent_path
-            if result.torrent_url:
+class SeedWorker(QThread):
+    log = Signal(str)
+    finished_ok = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, config: AppConfig, draft: ResourceDraft, torrent_url: str) -> None:
+        super().__init__()
+        self.config = config
+        self.draft = draft
+        self.torrent_url = torrent_url
+
+    def run(self) -> None:
+        try:
+            if self.torrent_url:
                 self.log.emit("正在下载站点最终种子。")
-                final_torrent_path = client.download_final_torrent(result.torrent_url, self.draft.title)
+                save_dir = self.draft.source_path.parent if self.draft.source_path.is_file() else self.draft.source_path
+                final_torrent_path = PhoenixClient(self.config).download_final_torrent(
+                    self.torrent_url, self.draft.title, save_dir=save_dir,
+                )
             else:
-                self.log.emit("未在上传结果页找到最终种子链接，将使用本地生成的种子打开 µTorrent。")
+                self.log.emit("未找到站点种子链接，跳过下载。")
+                return
+
+            save_path = self.draft.source_path.parent if self.draft.source_path.is_file() else self.draft.source_path
 
             utorrent = UTorrentClient(
                 UTorrentConfig(
@@ -105,18 +121,13 @@ class SeedWorker(QThread):
                     password=self.config.utorrent_webui_password,
                 )
             )
-            if self.use_webui:
-                save_path = self.draft.source_path.parent if self.draft.source_path.is_file() else self.draft.source_path
-                self.log.emit(f"正在通过 µTorrent WebUI 添加任务，保存路径：{save_path}")
-                utorrent.add_torrent_via_webui(final_torrent_path, save_path)
-            else:
-                self.log.emit("正在打开 µTorrent。")
-                utorrent.open_torrent(final_torrent_path)
 
-            message = "一键做种流程已完成"
-            if result.detail_url:
-                message += f"：{result.detail_url}"
-            self.finished_ok.emit(message)
+            # Use command line with /DIRECTORY parameter to specify download path
+            self.log.emit(f"正在打开 µTorrent，下载目录：{save_path}")
+            utorrent.open_torrent(final_torrent_path, save_path=save_path)
+            self.log.emit("µTorrent 已启动。")
+
+            self.finished_ok.emit("做种流程已完成。µTorrent 已打开种子文件。")
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -132,7 +143,9 @@ class MainWindow(QMainWindow):
             LOGGER.exception("failed to load saved app config")
             self.config = AppConfig()
         self.draft: ResourceDraft | None = None
-        self.worker: SeedWorker | None = None
+        self._create_worker: CreateTorrentWorker | None = None
+        self._seed_worker: SeedWorker | None = None
+        self._upload_dialog: UploadDialog | None = None
         self._build_ui()
         self.log(f"已加载本机配置：{user_config_path()}")
 
@@ -182,10 +195,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.compliance_checkbox)
 
         action_layout = QHBoxLayout()
-        self.use_webui_checkbox = QCheckBox("使用 µTorrent WebUI 自动指定路径")
         self.seed_button = QPushButton("一键做种")
         self.seed_button.clicked.connect(self.start_seed)
-        action_layout.addWidget(self.use_webui_checkbox)
         action_layout.addStretch(1)
         action_layout.addWidget(self.seed_button)
         layout.addLayout(action_layout)
@@ -492,20 +503,52 @@ class MainWindow(QMainWindow):
 
         self.seed_button.setEnabled(False)
         self.progress.setValue(0)
-        self.worker = SeedWorker(self.config, self.draft, self.use_webui_checkbox.isChecked())
-        self.worker.log.connect(self.log)
-        self.worker.progress.connect(self.progress.setValue)
-        self.worker.finished_ok.connect(self.on_seed_success)
-        self.worker.failed.connect(self.on_seed_failed)
-        self.worker.start()
+        self._create_worker = CreateTorrentWorker(self.config, self.draft)
+        self._create_worker.log.connect(self.log)
+        self._create_worker.progress.connect(self.progress.setValue)
+        self._create_worker.torrent_ready.connect(self._on_torrent_created)
+        self._create_worker.failed.connect(self._on_seed_failed)
+        self._create_worker.start()
 
-    def on_seed_success(self, message: str) -> None:
-        self.seed_button.setEnabled(True)
+    def _on_torrent_created(self, torrent_path: str) -> None:
         self.progress.setValue(100)
+        self.log("种子生成完成，正在打开浏览器上传...")
+        self._upload_dialog = UploadDialog(
+            self.config.upload_url,
+            self.draft,
+            Path(torrent_path),
+            self.config.cookie_header,
+            self,
+        )
+        self._upload_dialog.upload_succeeded.connect(self._on_upload_success)
+        self._upload_dialog.upload_failed.connect(self._on_upload_failed)
+        self._upload_dialog.finished.connect(self._on_upload_dialog_closed)
+        self._upload_dialog.open()
+
+    def _on_upload_success(self, torrent_url: str) -> None:
+        self.log(f"上传成功，种子链接：{torrent_url or '(未找到)'}")
+        self._start_seeding(torrent_url)
+
+    def _on_upload_failed(self, detail: str) -> None:
+        self.log(f"上传失败：{detail}")
+        self.seed_button.setEnabled(True)
+
+    def _on_upload_dialog_closed(self) -> None:
+        self._upload_dialog = None
+
+    def _start_seeding(self, torrent_url: str) -> None:
+        self._seed_worker = SeedWorker(self.config, self.draft, torrent_url)
+        self._seed_worker.log.connect(self.log)
+        self._seed_worker.finished_ok.connect(self._on_seed_success)
+        self._seed_worker.failed.connect(self._on_seed_failed)
+        self._seed_worker.start()
+
+    def _on_seed_success(self, message: str) -> None:
+        self.seed_button.setEnabled(True)
         self.log(message)
         QMessageBox.information(self, "完成", message)
 
-    def on_seed_failed(self, message: str) -> None:
+    def _on_seed_failed(self, message: str) -> None:
         self.seed_button.setEnabled(True)
         self.log(f"失败：{message}")
         QMessageBox.critical(self, "失败", message)
