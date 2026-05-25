@@ -91,7 +91,7 @@ def _find_script(name: str) -> Path:
 class SeedWorker(QThread):
     """Full seed workflow: create torrent → browser upload → download final → open µTorrent."""
     log = Signal(str)
-    finished_ok = Signal(str, str)  # (message, detail_url)
+    finished_ok = Signal(str, str, str)  # (message, detail_url, remaining_quota)
     failed = Signal(str)
 
     def __init__(self, config: AppConfig, draft: ResourceDraft) -> None:
@@ -119,7 +119,7 @@ class SeedWorker(QThread):
 
             # Step 2: Upload via Selenium and download site torrent
             self.log.emit("正在上传...")
-            detail_url, final_torrent_path = self._browser_upload(torrent_path)
+            detail_url, final_torrent_path, remaining_quota = self._browser_upload(torrent_path)
             if not detail_url:
                 self.failed.emit("浏览器上传失败，未获取到详情页链接。")
                 return
@@ -145,12 +145,13 @@ class SeedWorker(QThread):
             self.finished_ok.emit(
                 "µTorrent 已打开种子文件，下载完成后会自动做种。\n请保持 µTorrent 运行。",
                 detail_url,
+                remaining_quota,
             )
         except Exception as exc:
             self.failed.emit(str(exc))
 
-    def _browser_upload(self, torrent_path: Path) -> tuple[str, str]:
-        """Run Selenium browser upload. Returns (detail_url, saved_torrent_path)."""
+    def _browser_upload(self, torrent_path: Path) -> tuple[str, str, str]:
+        """Run Selenium browser upload. Returns (detail_url, saved_torrent_path, remaining_quota)."""
         import subprocess
 
         script_path = _find_script("browser_upload.py")
@@ -167,6 +168,8 @@ class SeedWorker(QThread):
             " ".join(self.draft.tags) if self.draft.tags else "",
             "--profile-dir", SELENIUM_PROFILE_DIR,
         ]
+        if self.config.headless_upload:
+            cmd.append("--headless")
 
         self.log.emit("浏览器上传中...")
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
@@ -180,13 +183,16 @@ class SeedWorker(QThread):
         lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
         detail_url = ""
         torrent_path = ""
+        remaining_quota = ""
         for line in lines:
-            if line.startswith("http"):
+            if line.startswith("quota:"):
+                remaining_quota = line.removeprefix("quota:")
+            elif line.startswith("http"):
                 if not detail_url:
                     detail_url = line
             elif line.endswith(".torrent") or "tmp" in line.lower():
                 torrent_path = line
-        return detail_url, torrent_path
+        return detail_url, torrent_path, remaining_quota
 
 
 class LoginWorker(QThread):
@@ -223,6 +229,32 @@ class LoginWorker(QThread):
             self.failed.emit(str(exc))
 
 
+class QuotaWorker(QThread):
+    """Fetch daily upload quota from the upload page."""
+    result = Signal(str)  # quota text like "4", or "" on failure
+    failed = Signal(str)
+
+    def __init__(self, upload_url: str, profile_dir: str) -> None:
+        super().__init__()
+        self.upload_url = upload_url
+        self.profile_dir = profile_dir
+
+    def run(self) -> None:
+        import subprocess
+        try:
+            script_path = _find_script("fetch_quota.py")
+            python_exe = _find_selenium_python()
+            cmd = [python_exe, str(script_path), self.upload_url, self.profile_dir]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            quota = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else ""
+            if quota:
+                self.result.emit(quota)
+            else:
+                self.failed.emit("无法获取上传次数")
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -237,10 +269,13 @@ class MainWindow(QMainWindow):
         self.draft: ResourceDraft | None = None
         self._seed_worker: SeedWorker | None = None
         self._login_worker: LoginWorker | None = None
+        self._quota_worker: QuotaWorker | None = None
+        self._remaining_quota: int | None = None
         self._build_ui()
         self.log(f"已加载本机配置：{user_config_path()}")
         self._check_first_run()
         self._update_login_status()
+        self._refresh_quota()
 
     def _build_ui(self) -> None:
         tabs = QTabWidget()
@@ -265,10 +300,26 @@ class MainWindow(QMainWindow):
         self.webui_url_input.setText(self.config.utorrent_webui_url)
         self.webui_user_input.setText(self.config.utorrent_webui_username)
         self.webui_password_input.setText(self.config.utorrent_webui_password)
+        self.headless_checkbox.setChecked(self.config.headless_upload)
 
     def _build_main_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
+
+        self._quota_label = QLabel("今日剩余上传次数：--")
+        self._quota_label.setAlignment(Qt.AlignCenter)
+        self._quota_label.setStyleSheet(
+            "QLabel {"
+            "  background-color: #E3F2FD;"
+            "  border: 1px solid #90CAF9;"
+            "  border-radius: 4px;"
+            "  padding: 6px 12px;"
+            "  font-size: 13px;"
+            "  font-weight: bold;"
+            "  color: #1565C0;"
+            "}"
+        )
+        layout.addWidget(self._quota_label)
 
         self._drop_hint = QLabel("拖放文件或文件夹到此处，或点击下方按钮选择")
         self._drop_hint.setAlignment(Qt.AlignCenter)
@@ -362,12 +413,12 @@ class MainWindow(QMainWindow):
         login_layout = QHBoxLayout()
         self._login_status_label = QLabel("未配置")
         self._login_status_label.setStyleSheet("color: #E65100;")
-        login_btn = QPushButton("配置登录")
-        login_btn.clicked.connect(self._start_login)
+        self._login_btn = QPushButton("配置登录")
+        self._login_btn.clicked.connect(self._start_login)
         clear_login_btn = QPushButton("清除")
         clear_login_btn.clicked.connect(self._clear_login)
         login_layout.addWidget(self._login_status_label, 1)
-        login_layout.addWidget(login_btn)
+        login_layout.addWidget(self._login_btn)
         login_layout.addWidget(clear_login_btn)
 
         self.utorrent_exe_input = QLineEdit(self.config.utorrent_executable)
@@ -387,6 +438,9 @@ class MainWindow(QMainWindow):
         self.webui_user_input = QLineEdit(self.config.utorrent_webui_username)
         self.webui_password_input = QLineEdit(self.config.utorrent_webui_password)
         self.webui_password_input.setEchoMode(QLineEdit.Password)
+        self.headless_checkbox = QCheckBox("上传时隐藏浏览器窗口")
+        self.headless_checkbox.setChecked(self.config.headless_upload)
+        self.headless_checkbox.stateChanged.connect(lambda _: self.save_settings(silent=True))
         layout.addRow("金凤站点地址", self.site_url_input)
         layout.addRow("Tracker 地址", tracker_actions)
         layout.addRow("登录凭证", login_layout)
@@ -394,6 +448,7 @@ class MainWindow(QMainWindow):
         layout.addRow("µTorrent WebUI", self.webui_url_input)
         layout.addRow("WebUI 用户名", self.webui_user_input)
         layout.addRow("WebUI 密码", self.webui_password_input)
+        layout.addRow("", self.headless_checkbox)
 
         for line_edit in (
             self.site_url_input,
@@ -421,6 +476,10 @@ class MainWindow(QMainWindow):
 
     def _start_login(self) -> None:
         """Open Selenium browser for user to log in."""
+        self._login_btn.setEnabled(False)
+        self._login_btn.setText("登录中...")
+        self._login_status_label.setText("请在浏览器窗口中登录...")
+        self._login_status_label.setStyleSheet("color: #1565C0; font-weight: bold;")
         self._login_worker = LoginWorker(self.config.site_base_url)
         self._login_worker.log.connect(self.log)
         self._login_worker.finished_ok.connect(self._on_login_success)
@@ -429,11 +488,16 @@ class MainWindow(QMainWindow):
         self.log("正在打开浏览器进行登录配置...")
 
     def _on_login_success(self) -> None:
+        self._login_btn.setEnabled(True)
+        self._login_btn.setText("配置登录")
         self._update_login_status()
         self.log("登录凭证已保存。")
+        self._refresh_quota()
         QMessageBox.information(self, "登录成功", "登录凭证已保存，现在可以使用一键做种功能。")
 
     def _on_login_failed(self, message: str) -> None:
+        self._login_btn.setEnabled(True)
+        self._login_btn.setText("配置登录")
         self._update_login_status()
         self.log(f"登录失败：{message}")
         QMessageBox.warning(self, "登录失败", message)
@@ -443,9 +507,42 @@ class MainWindow(QMainWindow):
         import shutil
         profile = Path(SELENIUM_PROFILE_DIR)
         if profile.exists():
+            # Delete cached cookies file if present
+            cookies_file = profile / "cookies.json"
+            cookies_file.unlink(missing_ok=True)
             shutil.rmtree(profile, ignore_errors=True)
             self.log("已清除登录凭证。")
         self._update_login_status()
+        self._quota_label.setText("今日剩余上传次数：请先配置登录")
+
+    # --- Quota ---
+
+    def _refresh_quota(self) -> None:
+        profile = Path(SELENIUM_PROFILE_DIR)
+        if not profile.exists() or not any(profile.rglob("Cookies")):
+            self._quota_label.setText("今日剩余上传次数：请先配置登录")
+            return
+        self._quota_worker = QuotaWorker(self.config.upload_url, SELENIUM_PROFILE_DIR)
+        self._quota_worker.result.connect(self._on_quota_result)
+        self._quota_worker.failed.connect(self._on_quota_failed)
+        self._quota_worker.start()
+
+    def _on_quota_result(self, count: str) -> None:
+        try:
+            self._remaining_quota = int(count)
+        except ValueError:
+            self._remaining_quota = None
+        self._update_quota_label()
+
+    def _on_quota_failed(self, msg: str) -> None:
+        self._quota_label.setText("今日剩余上传次数：获取失败")
+        self.log(f"获取上传次数失败：{msg}")
+
+    def _update_quota_label(self) -> None:
+        if self._remaining_quota is not None:
+            self._quota_label.setText(f"今日剩余上传次数：{self._remaining_quota}")
+        else:
+            self._quota_label.setText("今日剩余上传次数：--")
 
     # --- Seed workflow ---
 
@@ -486,6 +583,17 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "缺少简介", "请填写简介。")
             return
 
+        if self._remaining_quota is not None and self._remaining_quota <= 0:
+            box = QMessageBox(self)
+            box.setWindowTitle("提示")
+            box.setText("今日上传次数可能已用完，继续上传可能失败。\n是否仍要尝试？")
+            box.setIcon(QMessageBox.Warning)
+            box.addButton("取消", QMessageBox.RejectRole)
+            cont_btn = box.addButton("继续上传", QMessageBox.AcceptRole)
+            box.exec()
+            if box.clickedButton() != cont_btn:
+                return
+
         self.seed_button.setEnabled(False)
         self.progress.setRange(0, 0)
         self._seed_worker = SeedWorker(self.config, self.draft)
@@ -494,12 +602,22 @@ class MainWindow(QMainWindow):
         self._seed_worker.failed.connect(self._on_seed_failed)
         self._seed_worker.start()
 
-    def _on_seed_success(self, message: str, detail_url: str) -> None:
+    def _on_seed_success(self, message: str, detail_url: str, remaining_quota: str) -> None:
         self.seed_button.setEnabled(True)
         self.progress.setRange(0, 100)
         self.progress.setValue(100)
         self.statusBar().clearMessage()
         self.log("做种完成！")
+
+        # Update quota: server value is pre-upload, decrement by 1 for this upload
+        if remaining_quota:
+            try:
+                self._remaining_quota = int(remaining_quota) - 1
+            except ValueError:
+                pass
+        elif self._remaining_quota is not None:
+            self._remaining_quota -= 1
+        self._update_quota_label()
 
         # Show dialog with two buttons
         box = QMessageBox(self)
@@ -636,6 +754,7 @@ class MainWindow(QMainWindow):
         self.config.utorrent_webui_url = self.webui_url_input.text().strip() or AppConfig().utorrent_webui_url
         self.config.utorrent_webui_username = self.webui_user_input.text().strip()
         self.config.utorrent_webui_password = self.webui_password_input.text()
+        self.config.headless_upload = self.headless_checkbox.isChecked()
 
     def choose_folder(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "选择要分享的文件夹")
