@@ -59,3 +59,8 @@ Thumbs.db
 desktop.ini
 .vscode/
 .idea/
+
+# Debug and test artifacts
+查看种子的详细信息：*
+测试文件*.torrent
+测试文件*.exe
