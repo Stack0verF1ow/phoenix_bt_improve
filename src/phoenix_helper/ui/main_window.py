@@ -170,6 +170,7 @@ class SeedWorker(QThread):
         ]
         if self.config.headless_upload:
             cmd.append("--headless")
+        cmd.extend(["--browser", self.config.browser])
 
         self.log.emit("浏览器上传中...")
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
@@ -201,9 +202,10 @@ class LoginWorker(QThread):
     finished_ok = Signal()
     failed = Signal(str)
 
-    def __init__(self, site_url: str) -> None:
+    def __init__(self, site_url: str, browser: str = "edge") -> None:
         super().__init__()
         self.site_url = site_url
+        self.browser = browser
 
     def run(self) -> None:
         import subprocess
@@ -212,7 +214,8 @@ class LoginWorker(QThread):
             script_path = _find_script("browser_login.py")
             python_exe = _find_selenium_python()
 
-            cmd = [python_exe, str(script_path), self.site_url, SELENIUM_PROFILE_DIR]
+            cmd = [python_exe, str(script_path), self.site_url, SELENIUM_PROFILE_DIR,
+                   "--browser", self.browser]
             self.log.emit("正在打开浏览器，请在窗口中登录...")
 
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=360)
@@ -234,23 +237,67 @@ class QuotaWorker(QThread):
     result = Signal(str)  # quota text like "4", or "" on failure
     failed = Signal(str)
 
-    def __init__(self, upload_url: str, profile_dir: str) -> None:
+    def __init__(self, upload_url: str, profile_dir: str, browser: str = "edge") -> None:
         super().__init__()
         self.upload_url = upload_url
         self.profile_dir = profile_dir
+        self.browser = browser
 
     def run(self) -> None:
         import subprocess
         try:
             script_path = _find_script("fetch_quota.py")
             python_exe = _find_selenium_python()
-            cmd = [python_exe, str(script_path), self.upload_url, self.profile_dir]
+            cmd = [python_exe, str(script_path), self.upload_url, self.profile_dir,
+                   "--browser", self.browser]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             quota = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else ""
             if quota:
                 self.result.emit(quota)
             else:
                 self.failed.emit("无法获取上传次数")
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class BrowserTestWorker(QThread):
+    """Test if the selected browser driver is available."""
+    log = Signal(str)
+    finished_ok = Signal(str)  # browser name
+    failed = Signal(str)
+
+    def __init__(self, browser: str) -> None:
+        super().__init__()
+        self.browser = browser
+
+    def run(self) -> None:
+        import subprocess
+        try:
+            python_exe = _find_selenium_python()
+            browser = self.browser
+            self.log.emit(f"正在检测 {browser} 浏览器驱动...")
+
+            code = (
+                "from driver_factory import create_driver; "
+                f"d = create_driver('{browser}', '', headless=True); "
+                "d.quit(); print('OK')"
+            )
+            cmd = [python_exe, "-c", code]
+            scripts_dir = _find_script("driver_factory.py").parent
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60,
+                                     cwd=str(scripts_dir))
+
+            for line in result.stderr.splitlines():
+                line = line.strip()
+                if line:
+                    self.log.emit(line)
+
+            if result.returncode == 0 and "OK" in result.stdout:
+                self.finished_ok.emit(browser)
+            else:
+                self.failed.emit(f"{browser} 驱动检测失败")
+        except subprocess.TimeoutExpired:
+            self.failed.emit("检测超时，可能正在下载驱动，请稍后重试")
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -301,6 +348,10 @@ class MainWindow(QMainWindow):
         self.webui_user_input.setText(self.config.utorrent_webui_username)
         self.webui_password_input.setText(self.config.utorrent_webui_password)
         self.headless_checkbox.setChecked(self.config.headless_upload)
+        for i in range(self.browser_input.count()):
+            if self.browser_input.itemData(i) == self.config.browser:
+                self.browser_input.setCurrentIndex(i)
+                break
 
     def _build_main_tab(self) -> QWidget:
         page = QWidget()
@@ -438,12 +489,29 @@ class MainWindow(QMainWindow):
         self.webui_user_input = QLineEdit(self.config.utorrent_webui_username)
         self.webui_password_input = QLineEdit(self.config.utorrent_webui_password)
         self.webui_password_input.setEchoMode(QLineEdit.Password)
+        self.browser_input = QComboBox()
+        self.browser_input.addItem("Microsoft Edge", "edge")
+        self.browser_input.addItem("Google Chrome", "chrome")
+        self.browser_input.addItem("Firefox", "firefox")
+        # Set current browser
+        for i in range(self.browser_input.count()):
+            if self.browser_input.itemData(i) == self.config.browser:
+                self.browser_input.setCurrentIndex(i)
+                break
+        self.browser_input.currentIndexChanged.connect(lambda _: self.save_settings(silent=True))
+        browser_actions = QHBoxLayout()
+        test_browser_button = QPushButton("检测浏览器")
+        test_browser_button.clicked.connect(self._test_browser)
+        browser_actions.addWidget(self.browser_input, 1)
+        browser_actions.addWidget(test_browser_button)
+
         self.headless_checkbox = QCheckBox("上传时隐藏浏览器窗口")
         self.headless_checkbox.setChecked(self.config.headless_upload)
         self.headless_checkbox.stateChanged.connect(lambda _: self.save_settings(silent=True))
         layout.addRow("金凤站点地址", self.site_url_input)
         layout.addRow("Tracker 地址", tracker_actions)
         layout.addRow("登录凭证", login_layout)
+        layout.addRow("浏览器", browser_actions)
         layout.addRow("µTorrent 路径", utorrent_actions)
         layout.addRow("µTorrent WebUI", self.webui_url_input)
         layout.addRow("WebUI 用户名", self.webui_user_input)
@@ -480,7 +548,7 @@ class MainWindow(QMainWindow):
         self._login_btn.setText("登录中...")
         self._login_status_label.setText("请在浏览器窗口中登录...")
         self._login_status_label.setStyleSheet("color: #1565C0; font-weight: bold;")
-        self._login_worker = LoginWorker(self.config.site_base_url)
+        self._login_worker = LoginWorker(self.config.site_base_url, self.config.browser)
         self._login_worker.log.connect(self.log)
         self._login_worker.finished_ok.connect(self._on_login_success)
         self._login_worker.failed.connect(self._on_login_failed)
@@ -522,7 +590,7 @@ class MainWindow(QMainWindow):
         if not profile.exists() or not any(profile.rglob("Cookies")):
             self._quota_label.setText("今日剩余上传次数：请先配置登录")
             return
-        self._quota_worker = QuotaWorker(self.config.upload_url, SELENIUM_PROFILE_DIR)
+        self._quota_worker = QuotaWorker(self.config.upload_url, SELENIUM_PROFILE_DIR, self.config.browser)
         self._quota_worker.result.connect(self._on_quota_result)
         self._quota_worker.failed.connect(self._on_quota_failed)
         self._quota_worker.start()
@@ -714,6 +782,18 @@ class MainWindow(QMainWindow):
         self.log("µTorrent WebUI 检测通过。")
         QMessageBox.information(self, "WebUI 可用", "µTorrent WebUI 已连接成功，设置已保存。")
 
+    def _test_browser(self) -> None:
+        browser = self.browser_input.currentData()
+        self._browser_test_worker = BrowserTestWorker(browser)
+        self._browser_test_worker.log.connect(self.log)
+        self._browser_test_worker.finished_ok.connect(
+            lambda b: QMessageBox.information(self, "检测通过", f"{b} 浏览器驱动可用。")
+        )
+        self._browser_test_worker.failed.connect(
+            lambda msg: QMessageBox.warning(self, "检测失败", msg)
+        )
+        self._browser_test_worker.start()
+
     def auto_configure(self) -> None:
         messages: list[str] = []
         if not self.tracker_input.text().strip():
@@ -755,6 +835,7 @@ class MainWindow(QMainWindow):
         self.config.utorrent_webui_username = self.webui_user_input.text().strip()
         self.config.utorrent_webui_password = self.webui_password_input.text()
         self.config.headless_upload = self.headless_checkbox.isChecked()
+        self.config.browser = self.browser_input.currentData()
 
     def choose_folder(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "选择要分享的文件夹")

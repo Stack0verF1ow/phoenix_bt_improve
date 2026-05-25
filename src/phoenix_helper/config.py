@@ -23,6 +23,7 @@ class AppConfig:
     utorrent_webui_username: str = ""
     utorrent_webui_password: str = ""
     headless_upload: bool = True
+    browser: str = "edge"
     temp_dir: Path = Path(".cache/phoenix-helper")
     generated_torrent_dir: Path = Path("torrents/generated")
     final_torrent_dir: Path = Path("torrents/final")

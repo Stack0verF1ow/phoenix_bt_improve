@@ -1,6 +1,6 @@
 """Fetch daily upload quota from phoenix upload page.
 
-Usage: python fetch_quota.py <upload_url> <profile_dir>
+Usage: python fetch_quota.py <upload_url> <profile_dir> [--browser edge|chrome|firefox]
 
 Prints the remaining upload count to stdout.
 Uses cached cookies (requests) for speed; falls back to Selenium on first run.
@@ -14,17 +14,17 @@ from pathlib import Path
 
 import requests
 
+from driver_factory import create_driver
+
 
 COOKIES_FILE = "cookies.json"
 
 
 def main() -> int:
-    if len(sys.argv) < 3:
-        print("Usage: fetch_quota.py <upload_url> <profile_dir>", file=sys.stderr)
-        return 1
-
-    upload_url = sys.argv[1]
-    profile_dir = Path(sys.argv[2])
+    args = _parse_args()
+    upload_url = args["upload_url"]
+    profile_dir = Path(args["profile_dir"])
+    browser = args["browser"]
     cookies_path = profile_dir / COOKIES_FILE
 
     # Try fast path: requests with cached cookies
@@ -37,9 +37,9 @@ def main() -> int:
             return 0
         print("缓存 cookies 失效，回退到 Selenium", file=sys.stderr)
 
-    # Fallback: Selenium (slow, but also refreshes cookies)
+    # Fallback: Selenium
     print("使用 Selenium 获取...", file=sys.stderr)
-    count = _fetch_with_selenium(upload_url, profile_dir, cookies_path)
+    count = _fetch_with_selenium(upload_url, str(profile_dir), cookies_path, browser)
     if count is not None:
         print(count)
         return 0
@@ -48,8 +48,30 @@ def main() -> int:
     return 1
 
 
+def _parse_args() -> dict:
+    positional = []
+    kwargs = {"browser": "edge"}
+
+    i = 1
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+        if arg == "--browser" and i + 1 < len(sys.argv):
+            kwargs["browser"] = sys.argv[i + 1]
+            i += 2
+        else:
+            positional.append(arg)
+            i += 1
+
+    if len(positional) < 2:
+        print("Usage: fetch_quota.py <upload_url> <profile_dir> [--browser edge|chrome|firefox]", file=sys.stderr)
+        sys.exit(1)
+
+    kwargs["upload_url"] = positional[0]
+    kwargs["profile_dir"] = positional[1]
+    return kwargs
+
+
 def _fetch_with_requests(upload_url: str, cookies_path: Path) -> str | None:
-    """Try to fetch quota using requests + cached cookies. Returns count or None."""
     try:
         data = json.loads(cookies_path.read_text(encoding="utf-8"))
         session = requests.Session()
@@ -61,7 +83,6 @@ def _fetch_with_requests(upload_url: str, cookies_path: Path) -> str | None:
             return None
 
         text = resp.text
-        # Parse: <span id="cpContent__cphContent_lblCountUpload">4</span>
         marker = "cpContent__cphContent_lblCountUpload"
         idx = text.find(marker)
         if idx < 0:
@@ -75,25 +96,13 @@ def _fetch_with_requests(upload_url: str, cookies_path: Path) -> str | None:
         return None
 
 
-def _fetch_with_selenium(upload_url: str, profile_dir: Path, cookies_path: Path) -> str | None:
-    """Fetch quota via Selenium and cache cookies for next time."""
-    from selenium import webdriver
-    from selenium.webdriver.edge.options import Options as EdgeOptions
-
-    options = EdgeOptions()
-    options.add_argument("--headless=new")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1280,900")
-    options.add_argument("--no-sandbox")
-    options.add_argument(f"--user-data-dir={profile_dir}")
-    options.add_argument("--profile-directory=Default")
-
-    driver = webdriver.Edge(options=options)
+def _fetch_with_selenium(upload_url: str, profile_dir: str, cookies_path: Path, browser: str) -> str | None:
+    driver = create_driver(browser, profile_dir, headless=True)
     try:
         driver.get(upload_url)
         time.sleep(2)
 
-        # Cache cookies for future fast requests
+        # Cache cookies
         try:
             cookies = driver.get_cookies()
             cookies_path.write_text(json.dumps(cookies, ensure_ascii=False), encoding="utf-8")

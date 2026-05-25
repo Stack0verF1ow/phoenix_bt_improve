@@ -1,8 +1,8 @@
-"""Automate torrent upload via Selenium Edge browser.
+"""Automate torrent upload via Selenium browser.
 
-Usage: python browser_upload.py <upload_url> <torrent_path> <title> <subtitle> <description> <category> <tags> [--profile-dir <dir>] [--headless]
+Usage: python browser_upload.py <upload_url> <torrent_path> <title> <subtitle> <description> <category> <tags> [--profile-dir <dir>] [--headless] [--browser edge|chrome|firefox]
 
-Outputs detail_url and download_url on stdout on success.
+Outputs detail_url, saved torrent path, and quota on stdout on success.
 """
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ import sys
 import time
 from pathlib import Path
 
-from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.edge.options import Options as EdgeOptions
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+
+from driver_factory import create_driver
 
 
 def main() -> int:
@@ -23,35 +23,14 @@ def main() -> int:
     torrent_path = args["torrent_path"]
     profile_dir = args["profile_dir"]
     headless = args["headless"]
+    browser = args["browser"]
 
-    options = EdgeOptions()
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument("--disable-features=msEdgeSidebarV2,msEdgeCopilot")
-    options.add_argument("--disable-extensions")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option("useAutomationExtension", False)
-
-    if headless:
-        options.add_argument("--headless=new")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--window-size=1280,900")
-
-    if profile_dir and Path(profile_dir).exists():
-        options.add_argument(f"--user-data-dir={profile_dir}")
-        options.add_argument("--profile-directory=Default")
-        print(f"使用已保存的登录配置: {profile_dir}", file=sys.stderr)
-    else:
+    if not profile_dir or not Path(profile_dir).exists():
         print("ERROR: 未找到登录配置，请先配置登录凭证。", file=sys.stderr)
         return 1
 
     print("正在启动浏览器...", file=sys.stderr)
-    driver = webdriver.Edge(options=options)
-    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-        "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-    })
-    if not headless:
-        driver.set_window_size(1280, 900)
+    driver = create_driver(browser, profile_dir, headless=headless)
 
     try:
         # Navigate directly to upload page (also checks login)
@@ -59,7 +38,7 @@ def main() -> int:
         driver.get(upload_url)
         _dismiss_alerts(driver)
 
-        # Quick login check - if redirected to login page, fail
+        # Quick login check
         if "login" in driver.current_url.lower():
             print("ERROR: 未登录，请先配置登录凭证。", file=sys.stderr)
             return 1
@@ -71,10 +50,10 @@ def main() -> int:
         print("已登录，开始上传...", file=sys.stderr)
 
         # Extract daily upload quota
-        quota_text = driver.execute_script("""
-            var el = document.getElementById('cpContent__cphContent_lblCountUpload');
-            return el ? el.textContent.trim() : '';
-        """)
+        quota_text = driver.execute_script(
+            "var e=document.getElementById('cpContent__cphContent_lblCountUpload');"
+            "return e?e.textContent.trim():'';"
+        )
         if quota_text:
             print(f"今日剩余上传次数: {quota_text}", file=sys.stderr)
 
@@ -98,33 +77,23 @@ def main() -> int:
         result = driver.execute_script("""
             var title = arguments[0], subtitle = arguments[1], desc = arguments[2];
             var cat = arguments[3], tagStr = arguments[4];
-
             var $ = window.jQuery;
             if (!$) return 'no jQuery';
-
             var ok = 0;
-
             var $name = $('[name$="txtName"]').not('[name$="txtNameExtra"]');
             if ($name.length) { $name.val(title).trigger('input').trigger('change'); ok++; }
-
             var $extra = $('[name$="txtNameExtra"]');
             if ($extra.length) { $extra.val(subtitle).trigger('input').trigger('change'); ok++; }
-
             var $desc = $('[name$="txtDescription"]');
             if ($desc.length) { $desc.val(desc).trigger('input').trigger('change'); ok++; }
-
             var $cat = $('[name$="ddlCategory"]');
             if ($cat.length) { $cat.val(cat).trigger('change'); ok++; }
-
             var $tags = $('[name$="txtTags"]');
             if ($tags.length && tagStr) {
                 var tagList = tagStr.split(/\\s+/).filter(function(t) { return t.length > 0; });
-                tagList.forEach(function(tag) {
-                    $tags.tagsinput('add', tag);
-                });
+                tagList.forEach(function(tag) { $tags.tagsinput('add', tag); });
                 ok++;
             }
-
             return ok;
         """, title, subtitle, description, category, tags)
         print(f"已填写 {result} 个字段", file=sys.stderr)
@@ -228,7 +197,7 @@ def main() -> int:
 
         print(f"种子下载链接: {torrent_download_url}", file=sys.stderr)
 
-        # Download torrent using requests + Selenium cookies (faster than fetch+base64)
+        # Download torrent using requests + Selenium cookies
         print("正在下载种子...", file=sys.stderr)
         cookies = driver.get_cookies()
         # Cache cookies for fast quota checks
@@ -295,9 +264,8 @@ def main() -> int:
 
 
 def _parse_args() -> dict:
-    """Parse command line arguments."""
     positional = []
-    kwargs = {"profile_dir": "", "headless": False}
+    kwargs = {"profile_dir": "", "headless": False, "browser": "edge"}
 
     i = 1
     while i < len(sys.argv):
@@ -308,12 +276,15 @@ def _parse_args() -> dict:
         elif arg == "--headless":
             kwargs["headless"] = True
             i += 1
+        elif arg == "--browser" and i + 1 < len(sys.argv):
+            kwargs["browser"] = sys.argv[i + 1]
+            i += 2
         else:
             positional.append(arg)
             i += 1
 
     if len(positional) < 7:
-        print("Usage: browser_upload.py <upload_url> <torrent_path> <title> <subtitle> <description> <category> <tags> [--profile-dir <dir>] [--headless]", file=sys.stderr)
+        print("Usage: browser_upload.py <upload_url> <torrent_path> <title> <subtitle> <description> <category> <tags> [--profile-dir <dir>] [--headless] [--browser edge|chrome|firefox]", file=sys.stderr)
         sys.exit(1)
 
     keys = ["upload_url", "torrent_path", "title", "subtitle", "description", "category", "tags"]
@@ -322,7 +293,7 @@ def _parse_args() -> dict:
     return kwargs
 
 
-def _dismiss_alerts(driver: webdriver.Edge) -> None:
+def _dismiss_alerts(driver) -> None:
     for _ in range(3):
         try:
             alert = driver.switch_to.alert
