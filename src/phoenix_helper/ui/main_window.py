@@ -131,7 +131,7 @@ class SeedWorker(QThread):
 
             # Step 4: Open µTorrent
             final_torrent = Path(final_torrent_path)
-            save_path = self.draft.source_path.parent if self.draft.source_path.is_file() else self.draft.source_path
+            save_path = self.draft.source_path.parent
             self.log.emit(f"正在打开 µTorrent，下载目录：{save_path}")
             utorrent = UTorrentClient(UTorrentConfig(
                 executable=self.config.utorrent_executable,
