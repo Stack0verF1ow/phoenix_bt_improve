@@ -3,7 +3,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QMimeData, QThread, Signal, Qt
+from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -138,6 +139,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("金凤本地做种助手")
         self.resize(920, 720)
+        self.setAcceptDrops(True)
         try:
             self.config = load_app_config()
         except Exception:
@@ -180,6 +182,21 @@ class MainWindow(QMainWindow):
     def _build_main_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
+
+        # Drag and drop hint
+        self._drop_hint = QLabel("拖放文件或文件夹到此处，或点击下方按钮选择")
+        self._drop_hint.setAlignment(Qt.AlignCenter)
+        self._drop_hint.setStyleSheet(
+            "QLabel {"
+            "  border: 2px dashed #aaa;"
+            "  border-radius: 8px;"
+            "  padding: 20px;"
+            "  color: #888;"
+            "  font-size: 14px;"
+            "}"
+        )
+        self._drop_hint.setMinimumHeight(80)
+        layout.addWidget(self._drop_hint)
 
         choose_layout = QHBoxLayout()
         self.path_label = QLabel("尚未选择资源")
@@ -577,3 +594,42 @@ class MainWindow(QMainWindow):
 
     def log(self, message: str) -> None:
         self.log_box.append_line(message)
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            self._drop_hint.setStyleSheet(
+                "QLabel {"
+                "  border: 2px dashed #4CAF50;"
+                "  border-radius: 8px;"
+                "  padding: 20px;"
+                "  color: #4CAF50;"
+                "  font-size: 14px;"
+                "  background-color: #E8F5E9;"
+                "}"
+            )
+            self._drop_hint.setText("松开鼠标即可加载资源")
+
+    def dragLeaveEvent(self, event) -> None:
+        self._reset_drop_hint()
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        self._reset_drop_hint()
+        urls = event.mimeData().urls()
+        if urls:
+            path = Path(urls[0].toLocalFile())
+            if path.exists():
+                self.load_draft(path)
+                event.acceptProposedAction()
+
+    def _reset_drop_hint(self) -> None:
+        self._drop_hint.setText("拖放文件或文件夹到此处，或点击下方按钮选择")
+        self._drop_hint.setStyleSheet(
+            "QLabel {"
+            "  border: 2px dashed #aaa;"
+            "  border-radius: 8px;"
+            "  padding: 20px;"
+            "  color: #888;"
+            "  font-size: 14px;"
+            "}"
+        )
