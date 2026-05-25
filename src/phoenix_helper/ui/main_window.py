@@ -36,6 +36,7 @@ from phoenix_helper.phoenix.discovery import discover_tracker_from_default_sampl
 from phoenix_helper.torrent.creator import create_torrent, recommended_piece_length
 from phoenix_helper.utils.paths import safe_filename, unique_path
 from phoenix_helper.ui.login_dialog import LoginDialog
+from phoenix_helper.ui.setup_dialog import SetupDialog
 from phoenix_helper.ui.upload_dialog import UploadDialog
 from phoenix_helper.ui.widgets import LogBox
 
@@ -148,12 +149,33 @@ class MainWindow(QMainWindow):
         self._upload_dialog: UploadDialog | None = None
         self._build_ui()
         self.log(f"已加载本机配置：{user_config_path()}")
+        self._check_first_run()
 
     def _build_ui(self) -> None:
         tabs = QTabWidget()
         tabs.addTab(self._build_main_tab(), "一键做种")
         tabs.addTab(self._build_settings_tab(), "设置")
         self.setCentralWidget(tabs)
+
+    def _check_first_run(self) -> None:
+        """Show setup dialog if WebUI is not configured."""
+        if not self.config.utorrent_webui_url:
+            self.log("首次运行，打开配置向导...")
+            self._show_setup_dialog()
+
+    def _show_setup_dialog(self) -> None:
+        dialog = SetupDialog(self.config, self)
+        if dialog.exec() == QDialog.Accepted:
+            self._sync_inputs_from_config()
+            self.save_settings(silent=True)
+            self.log("配置已保存。")
+
+    def _sync_inputs_from_config(self) -> None:
+        """Update UI inputs from config."""
+        self.utorrent_exe_input.setText(self.config.utorrent_executable)
+        self.webui_url_input.setText(self.config.utorrent_webui_url)
+        self.webui_user_input.setText(self.config.utorrent_webui_username)
+        self.webui_password_input.setText(self.config.utorrent_webui_password)
 
     def _build_main_tab(self) -> QWidget:
         page = QWidget()
