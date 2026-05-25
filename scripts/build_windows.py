@@ -45,6 +45,16 @@ def main() -> int:
         f"{ROOT / 'scripts' / 'browser_login.py'}{os.pathsep}scripts",
         "--add-data",
         f"{ROOT / 'scripts' / 'fetch_quota.py'}{os.pathsep}scripts",
+        "--add-data",
+        f"{ROOT / 'scripts' / 'driver_factory.py'}{os.pathsep}scripts",
+        *(
+            [
+                "--add-data",
+                f"{ROOT / 'scripts' / 'drivers'}{os.pathsep}scripts{os.sep}drivers",
+            ]
+            if (ROOT / "scripts" / "drivers").is_dir()
+            else []
+        ),
         "--exclude-module",
         "cryptography",
         "--exclude-module",
