@@ -173,7 +173,8 @@ class SeedWorker(QThread):
         cmd.extend(["--browser", self.config.browser])
 
         self.log.emit("浏览器上传中...")
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120,
+                                creationflags=subprocess.CREATE_NO_WINDOW)
 
         for line in result.stderr.splitlines():
             self.log.emit(line)
@@ -218,7 +219,8 @@ class LoginWorker(QThread):
                    "--browser", self.browser]
             self.log.emit("正在打开浏览器，请在窗口中登录...")
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=360)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=360,
+                                    creationflags=subprocess.CREATE_NO_WINDOW)
 
             for line in result.stderr.splitlines():
                 self.log.emit(line)
@@ -250,7 +252,8 @@ class QuotaWorker(QThread):
             python_exe = _find_selenium_python()
             cmd = [python_exe, str(script_path), self.upload_url, self.profile_dir,
                    "--browser", self.browser]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30,
+                                    creationflags=subprocess.CREATE_NO_WINDOW)
             quota = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else ""
             if quota:
                 self.result.emit(quota)
@@ -285,7 +288,8 @@ class BrowserTestWorker(QThread):
             cmd = [python_exe, "-c", code]
             scripts_dir = _find_script("driver_factory.py").parent
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60,
-                                     cwd=str(scripts_dir))
+                                     cwd=str(scripts_dir),
+                                     creationflags=subprocess.CREATE_NO_WINDOW)
 
             for line in result.stderr.splitlines():
                 line = line.strip()
