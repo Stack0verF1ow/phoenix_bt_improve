@@ -22,7 +22,25 @@
 
 ### 2. 首次配置
 
+**µTorrent 配置**：
+
+​	![utorrent设置_01](README.assets/utorrent设置_01.png)
+
+![utorrent设置_02](README.assets/utorrent设置_02.png)
+
+![utorrent设置_03](README.assets/utorrent设置_03.png)
+
+1. 点击 **自动查找**（会搜索常见安装路径）
+2. 找不到时手动选择 `uTorrent.exe`
+3. 如使用 WebUI，填写地址（默认 `http://127.0.0.1:8080/gui/`）和账号密码
+
 打开程序后，进入 **设置** 页面：
+
+<img src="README.assets/软件设置_01.png" alt="软件设置_01"  />
+
+![软件设置_02](README.assets/软件设置_02.png)
+
+![软件设置_03](README.assets/软件设置_03.png)
 
 **浏览器配置**：
 
@@ -36,12 +54,6 @@
 2. 在弹出的浏览器窗口中完成学校账号登录
 3. 登录成功后点击 **保存登录状态**
 4. 助手只保存站点 Cookie，不保存学校账号密码
-
-**µTorrent 配置**：
-
-1. 点击 **自动查找**（会搜索常见安装路径）
-2. 找不到时手动选择 `uTorrent.exe`
-3. 如使用 WebUI，填写地址（默认 `http://127.0.0.1:8080/gui/`）和账号密码
 
 **Tracker 地址**：
 
