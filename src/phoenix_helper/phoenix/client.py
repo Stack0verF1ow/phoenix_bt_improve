@@ -6,6 +6,8 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 
+from bs4 import BeautifulSoup
+
 from phoenix_helper.config import AppConfig
 from phoenix_helper.models import ResourceDraft, UploadResult
 from phoenix_helper.phoenix.forms import UploadForm, parse_upload_form
@@ -32,7 +34,74 @@ class PhoenixClient:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
         })
         if config.cookie_header:
-            self.session.headers.update({"Cookie": config.cookie_header})
+            for pair in config.cookie_header.split(";"):
+                pair = pair.strip()
+                if "=" not in pair:
+                    continue
+                name, value = pair.split("=", 1)
+                self.session.cookies.set(
+                    name.strip(), value.strip(),
+                    domain="phoenix.stu.edu.cn", path="/",
+                )
+
+    LOGIN_URL_PATH = "/login.aspx"
+
+    def login(self, username: str, password: str) -> str:
+        """Login to the Phoenix site via HTTP. Returns the auth cookie header."""
+        login_url = f"{self.config.site_base_url.rstrip('/')}{self.LOGIN_URL_PATH}"
+        LOGGER.info("GET login page: %s", login_url)
+        r = self.session.get(login_url, timeout=20)
+        r.raise_for_status()
+        LOGGER.info("Login page: status=%d, url=%s", r.status_code, r.url)
+
+        if "login.aspx" not in r.url.lower():
+            LOGGER.warning("Already logged in, redirect: %s", r.url)
+            # Already logged in, return existing cookie header
+            return self._get_cookie_header()
+
+        soup = BeautifulSoup(r.text, "html.parser")
+        form = soup.find("form")
+        if not form:
+            raise PhoenixClientError("Login form not found")
+
+        fields = {}
+        for inp in form.find_all("input"):
+            name = inp.get("name", "")
+            if name and inp.get("type", "") == "hidden":
+                fields[name] = inp.get("value", "")
+
+        fields["ctl00$cpContent$txtName"] = username
+        fields["ctl00$cpContent$txtPass"] = password
+        fields["ctl00$cpContent$chkRememberMe"] = "on"
+        fields["ctl00$cpContent$btnLogin"] = "登录"
+
+        LOGGER.info("POST login as %s...", username)
+        r2 = self.session.post(login_url, data=fields, timeout=20)
+        LOGGER.info("POST login: status=%d, url=%s", r2.status_code, r2.url)
+
+        if "login.aspx" not in r2.url.lower():
+            LOGGER.info("Login successful! Redirected to: %s", r2.url)
+            cookie_header = self._get_cookie_header()
+            LOGGER.info("Auth cookie captured (%d chars)", len(cookie_header))
+            return cookie_header
+
+        LOGGER.warning("Login failed - still on login page")
+        error = ""
+        for sel in ("#cpContent__cphContent_lblInfo", ".validation-summary-errors"):
+            el = BeautifulSoup(r2.text, "html.parser").select_one(sel)
+            if el:
+                error = el.get_text(strip=True)
+                if error:
+                    break
+        raise PhoenixClientError(error or "登录失败，请检查用户名和密码")
+
+    def _get_cookie_header(self) -> str:
+        """Build cookie header string from session cookie jar."""
+        cookies = []
+        for cookie in self.session.cookies:
+            if "phoenix" in cookie.domain or "stu.edu.cn" in cookie.domain:
+                cookies.append(f"{cookie.name}={cookie.value}")
+        return "; ".join(cookies)
 
     def fetch_upload_form(self) -> UploadForm:
         LOGGER.info("GET upload form: %s", self.config.upload_url)
@@ -160,6 +229,9 @@ class PhoenixClient:
         return target
 
     def _resolve_detail_url(self, html: str, response_url: str) -> str:
+        # If the response already landed on the detail page, use it directly
+        if response_url and "detail.aspx" in response_url.lower():
+            return response_url
         detail_url = find_detail_url(html, self.config.site_base_url)
         if detail_url:
             return detail_url

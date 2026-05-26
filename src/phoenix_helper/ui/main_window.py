@@ -35,10 +35,9 @@ from phoenix_helper.phoenix.client import PhoenixClient
 from phoenix_helper.phoenix.discovery import discover_tracker_from_default_sample, discover_tracker_from_torrent
 from phoenix_helper.torrent.creator import create_torrent, recommended_piece_length
 from phoenix_helper.utils.paths import safe_filename, unique_path
+from phoenix_helper.ui.http_login_dialog import HttpLoginDialog
 from phoenix_helper.ui.setup_dialog import SetupDialog
 from phoenix_helper.ui.widgets import LogBox
-from phoenix_helper.webengine.login_dialog import WebEngineLoginDialog
-from phoenix_helper.webengine.upload_dialog import WebEngineUploadDialog
 
 CATEGORIES = [
     ("0", "未分类"),
@@ -60,11 +59,16 @@ QUOTA_MARKER = "cpContent__cphContent_lblCountUpload"
 def _fetch_quota_via_http(upload_url: str, cookie_header: str) -> str:
     session = requests.Session()
     session.headers.update({
-        "Cookie": cookie_header,
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
     })
+    for pair in cookie_header.split(";"):
+        pair = pair.strip()
+        if "=" not in pair:
+            continue
+        name, value = pair.split("=", 1)
+        session.cookies.set(name.strip(), value.strip(), domain="phoenix.stu.edu.cn", path="/")
     resp = session.get(upload_url, timeout=10)
     # Check if we were redirected to login page (session expired)
     if "login.aspx" in resp.url.lower():
@@ -109,6 +113,33 @@ class CreateTorrentWorker(QThread):
             )
             self.log.emit(f"种子已生成：{torrent_path}")
             self.finished_ok.emit(torrent_path)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class UploadTorrentWorker(QThread):
+    """Upload torrent to site via HTTP in background thread."""
+    log = Signal(str)
+    finished_ok = Signal(str, str)  # (detail_url, torrent_url)
+    failed = Signal(str)
+
+    def __init__(self, config: AppConfig, draft: ResourceDraft, torrent_path: Path) -> None:
+        super().__init__()
+        self.config = config
+        self.draft = draft
+        self.torrent_path = torrent_path
+
+    def run(self) -> None:
+        try:
+            self.log.emit("正在上传种子到金凤站点...")
+            client = PhoenixClient(self.config)
+            result = client.upload_torrent(self.draft, self.torrent_path)
+
+            if result.success:
+                self.log.emit(f"上传成功，详情页：{result.detail_url}")
+                self.finished_ok.emit(result.detail_url, result.torrent_url)
+            else:
+                self.failed.emit(result.message)
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -193,10 +224,10 @@ class MainWindow(QMainWindow):
             self.config = AppConfig()
         self.draft: ResourceDraft | None = None
         self._create_torrent_worker: CreateTorrentWorker | None = None
+        self._upload_worker: UploadTorrentWorker | None = None
         self._download_final_worker: DownloadFinalTorrentWorker | None = None
         self._quota_worker: QuotaWorker | None = None
         self._remaining_quota: int | None = None
-        self._torrent_path: Path | None = None
         self._build_ui()
         self.log(f"已加载本机配置：{user_config_path()}")
         self._check_first_run()
@@ -334,7 +365,7 @@ class MainWindow(QMainWindow):
         tracker_actions.addWidget(tracker_from_sample_button)
         tracker_actions.addWidget(tracker_from_file_button)
 
-        # Login credentials section — uses embedded WebEngine browser
+        # Login credentials section — uses HTTP login dialog
         login_layout = QHBoxLayout()
         self._login_status_label = QLabel("未配置")
         self._login_status_label.setStyleSheet("color: #E65100;")
@@ -401,11 +432,11 @@ class MainWindow(QMainWindow):
     def _start_login(self) -> None:
         self._login_btn.setEnabled(False)
         self._login_btn.setText("登录中...")
-        self._login_status_label.setText("正在打开内置浏览器...")
+        self._login_status_label.setText("正在打开登录窗口...")
         self._login_status_label.setStyleSheet("color: #1565C0; font-weight: bold;")
-        self.log("正在打开内置浏览器进行登录配置...")
+        self.log("正在打开登录窗口...")
 
-        dialog = WebEngineLoginDialog(self.config.site_base_url, self)
+        dialog = HttpLoginDialog(self.config, self)
         if dialog.exec() == QDialog.Accepted:
             cookie = dialog.cookie_header
             if cookie:
@@ -421,8 +452,8 @@ class MainWindow(QMainWindow):
                 self._login_btn.setEnabled(True)
                 self._login_btn.setText("配置登录")
                 self._update_login_status()
-                self.log("登录失败：未能提取到 Cookie。")
-                QMessageBox.warning(self, "登录失败", "未能提取到有效的登录 Cookie，请重试。")
+                self.log("登录失败：未能提取到登录凭证。")
+                QMessageBox.warning(self, "登录失败", "未能提取到有效的登录凭证，请重试。")
         else:
             self._login_btn.setEnabled(True)
             self._login_btn.setText("配置登录")
@@ -523,52 +554,40 @@ class MainWindow(QMainWindow):
         self._create_torrent_worker.start()
 
     def _on_torrent_created(self, torrent_path: Path) -> None:
-        """Torrent created, now open WebEngine upload dialog."""
-        self._torrent_path = torrent_path
-        self.log("种子已生成，正在打开上传窗口...")
+        """Torrent created, now upload via HTTP in background."""
+        self.log("种子已生成，正在上传到站点...")
 
-        # Step 2: Open WebEngine upload dialog (must be in main thread)
-        dialog = WebEngineUploadDialog(
-            self.config.site_base_url,
-            self.draft,
-            torrent_path,
-            self.config.cookie_header,
-            self.config.show_upload_window,
-            self,
+        # Step 2: Upload torrent via HTTP in background
+        self._upload_worker = UploadTorrentWorker(self.config, self.draft, torrent_path)
+        self._upload_worker.log.connect(self.log)
+        self._upload_worker.finished_ok.connect(self._on_upload_complete)
+        self._upload_worker.failed.connect(self._on_seed_failed)
+        self._upload_worker.start()
+
+    def _on_upload_complete(self, detail_url: str, torrent_url: str) -> None:
+        """Upload complete, now download final torrent and open uTorrent."""
+        if not detail_url:
+            self._on_seed_failed("上传失败，未获取到详情页链接。")
+            return
+
+        if not torrent_url:
+            self.log("未找到种子下载链接，请手动从详情页下载。")
+            self._on_seed_success(
+                "上传成功，但未找到种子下载链接。\n请手动从详情页下载种子并添加到 uTorrent。",
+                detail_url,
+            )
+            return
+
+        # Step 3: Download final torrent and open uTorrent
+        self._download_final_worker = DownloadFinalTorrentWorker(
+            self.config, self.draft, detail_url, torrent_url
         )
-        if dialog.exec() == QDialog.Accepted:
-            detail_url = dialog.detail_url
-            torrent_url = dialog.torrent_url
-
-            if not detail_url:
-                self._on_seed_failed("上传失败，未获取到详情页链接。")
-                return
-
-            self.log(f"上传成功，详情页：{detail_url}")
-
-            if not torrent_url:
-                self.log("未找到种子下载链接，请手动从详情页下载。")
-                self._on_seed_success(
-                    "上传成功，但未找到种子下载链接。\n请手动从详情页下载种子并添加到 uTorrent。",
-                    detail_url,
-                )
-                return
-
-            # Step 3: Download final torrent and open uTorrent
-            self._download_final_worker = DownloadFinalTorrentWorker(
-                self.config, self.draft, detail_url, torrent_url
-            )
-            self._download_final_worker.log.connect(self.log)
-            self._download_final_worker.finished_ok.connect(
-                lambda msg, url: self._on_seed_success(msg, url)
-            )
-            self._download_final_worker.failed.connect(self._on_seed_failed)
-            self._download_final_worker.start()
-        else:
-            self.seed_button.setEnabled(True)
-            self.progress.setRange(0, 100)
-            self.progress.setValue(0)
-            self.log("上传已取消。")
+        self._download_final_worker.log.connect(self.log)
+        self._download_final_worker.finished_ok.connect(
+            lambda msg, url: self._on_seed_success(msg, url)
+        )
+        self._download_final_worker.failed.connect(self._on_seed_failed)
+        self._download_final_worker.start()
 
     def _on_seed_success(self, message: str, detail_url: str) -> None:
         self.seed_button.setEnabled(True)

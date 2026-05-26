@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 BUILD = ROOT / "build"
-APP_NAME = "phoenix-helper"
+APP_NAME = "phoenix-helper-http"
 VENV_PYTHON = ROOT / ".build-venv" / "Scripts" / "python.exe"
 
 
@@ -97,8 +97,6 @@ def main() -> int:
         "--name", APP_NAME,
         "--paths", str(ROOT / "src"),
         "--hidden-import", "phoenix_helper.ui.main_window",
-        "--hidden-import", "phoenix_helper.webengine.upload_dialog",
-        "--hidden-import", "phoenix_helper.webengine.login_dialog",
         str(ROOT / "scripts" / "run_app.py"),
     ]
 
