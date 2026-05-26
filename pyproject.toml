@@ -9,14 +9,12 @@ description = "金凤 BT 本地一键做种助手"
 requires-python = ">=3.11"
 dependencies = [
     "PySide6>=6.7,<6.8",
+    "PySide6-WebEngine>=6.7,<6.8",
     "requests>=2.31",
     "beautifulsoup4>=4.12",
 ]
 
 [project.optional-dependencies]
-web-login = [
-    "PySide6-WebEngine>=6.7,<6.8",
-]
 dev = [
     "pytest>=8.0",
     "pyinstaller>=6.0",

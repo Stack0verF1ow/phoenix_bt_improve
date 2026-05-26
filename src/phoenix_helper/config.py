@@ -22,8 +22,8 @@ class AppConfig:
     utorrent_webui_url: str = "http://127.0.0.1:8080/gui/"
     utorrent_webui_username: str = ""
     utorrent_webui_password: str = ""
-    headless_upload: bool = True
-    browser: str = "edge"
+    show_upload_window: bool = False
+    webengine_profile_dir: Path = Path.home() / ".phoenix_helper" / "webengine_profile"
     temp_dir: Path = Path(".cache/phoenix-helper")
     generated_torrent_dir: Path = Path("torrents/generated")
     final_torrent_dir: Path = Path("torrents/final")
