@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import logging
-import sys
 import webbrowser
 from pathlib import Path
 
+import requests
 from PySide6.QtCore import QThread, Signal, Qt
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
@@ -31,11 +31,14 @@ from phoenix_helper.clients.discovery import find_utorrent_executable
 from phoenix_helper.clients.utorrent import UTorrentClient, UTorrentConfig
 from phoenix_helper.config import AppConfig, load_app_config, save_app_config, user_config_path
 from phoenix_helper.models import ResourceDraft, format_size
+from phoenix_helper.phoenix.client import PhoenixClient
 from phoenix_helper.phoenix.discovery import discover_tracker_from_default_sample, discover_tracker_from_torrent
 from phoenix_helper.torrent.creator import create_torrent, recommended_piece_length
 from phoenix_helper.utils.paths import safe_filename, unique_path
 from phoenix_helper.ui.setup_dialog import SetupDialog
 from phoenix_helper.ui.widgets import LogBox
+from phoenix_helper.webengine.login_dialog import WebEngineLoginDialog
+from phoenix_helper.webengine.upload_dialog import WebEngineUploadDialog
 
 CATEGORIES = [
     ("0", "未分类"),
@@ -50,48 +53,38 @@ CATEGORIES = [
 
 LOGGER = logging.getLogger(__name__)
 
-SELENIUM_PROFILE_DIR = str(Path.home() / ".phoenix_helper" / "selenium_profile")
+WEBENGINE_PROFILE_DIR = str(Path.home() / ".phoenix_helper" / "webengine_profile")
+QUOTA_MARKER = "cpContent__cphContent_lblCountUpload"
 
 
-def _find_selenium_python() -> str:
-    """Find a Python executable that can run Selenium without OpenSSL issues."""
-    import shutil
-
-    for candidate in [
-        r"D:\Anaconda\python.exe",
-        r"C:\Anaconda\python.exe",
-        r"C:\ProgramData\Anaconda3\python.exe",
-        str(Path.home() / "Anaconda3" / "python.exe"),
-        str(Path.home() / "miniconda3" / "python.exe"),
-    ]:
-        if Path(candidate).exists():
-            return candidate
-
-    system_python = shutil.which("python3") or shutil.which("python")
-    if system_python:
-        return system_python
-
-    return sys.executable
-
-
-def _find_script(name: str) -> Path:
-    """Find a bundled script file."""
-    if getattr(sys, 'frozen', False):
-        p = Path(sys._MEIPASS) / "scripts" / name
-    else:
-        p = Path(__file__).resolve().parents[2] / "scripts" / name
-    if p.exists():
-        return p
-    p = Path(f"scripts/{name}")
-    if p.exists():
-        return p
-    raise FileNotFoundError(f"找不到脚本：{name}")
+def _fetch_quota_via_http(upload_url: str, cookie_header: str) -> str:
+    session = requests.Session()
+    session.headers.update({
+        "Cookie": cookie_header,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    })
+    resp = session.get(upload_url, timeout=10)
+    # Check if we were redirected to login page (session expired)
+    if "login.aspx" in resp.url.lower():
+        LOGGER.warning("Quota fetch redirected to login page, session may have expired")
+        return ""
+    text = resp.text
+    idx = text.find(QUOTA_MARKER)
+    if idx < 0:
+        return ""
+    start = text.find(">", idx) + 1
+    end = text.find("<", start)
+    if start > 0 and end > start:
+        return text[start:end].strip()
+    return ""
 
 
-class SeedWorker(QThread):
-    """Full seed workflow: create torrent → browser upload → download final → open µTorrent."""
+class CreateTorrentWorker(QThread):
+    """Create torrent in background thread."""
     log = Signal(str)
-    finished_ok = Signal(str, str, str)  # (message, detail_url, remaining_quota)
+    finished_ok = Signal(Path)  # torrent_path
     failed = Signal(str)
 
     def __init__(self, config: AppConfig, draft: ResourceDraft) -> None:
@@ -103,7 +96,6 @@ class SeedWorker(QThread):
         try:
             self.config.ensure_directories()
 
-            # Step 1: Create torrent
             self.log.emit("正在生成种子...")
             torrent_path = unique_path(
                 self.config.generated_torrent_dir / f"{safe_filename(self.draft.title)}.torrent"
@@ -116,23 +108,40 @@ class SeedWorker(QThread):
                 piece_length=piece_length,
             )
             self.log.emit(f"种子已生成：{torrent_path}")
+            self.finished_ok.emit(torrent_path)
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
-            # Step 2: Upload via Selenium and download site torrent
-            self.log.emit("正在上传...")
-            detail_url, final_torrent_path, remaining_quota = self._browser_upload(torrent_path)
-            if not detail_url:
-                self.failed.emit("浏览器上传失败，未获取到详情页链接。")
-                return
-            if not final_torrent_path or not Path(final_torrent_path).exists():
-                self.failed.emit("种子文件下载失败。")
-                return
-            self.log.emit(f"上传成功，详情页：{detail_url}")
+
+class DownloadFinalTorrentWorker(QThread):
+    """Download final torrent and open uTorrent in background thread."""
+    log = Signal(str)
+    finished_ok = Signal(str, str)  # (message, detail_url)
+    failed = Signal(str)
+
+    def __init__(self, config: AppConfig, draft: ResourceDraft, detail_url: str, torrent_url: str) -> None:
+        super().__init__()
+        self.config = config
+        self.draft = draft
+        self.detail_url = detail_url
+        self.torrent_url = torrent_url
+
+    def run(self) -> None:
+        try:
+            self.config.ensure_directories()
+
+            # Download final torrent
+            self.log.emit("正在下载站点种子...")
+            client = PhoenixClient(self.config)
+            final_torrent_path = client.download_final_torrent(
+                self.torrent_url, self.draft.title, self.config.final_torrent_dir
+            )
             self.log.emit(f"站点种子已下载：{final_torrent_path}")
 
-            # Step 4: Open µTorrent
+            # Open uTorrent
             final_torrent = Path(final_torrent_path)
             save_path = self.draft.source_path.parent
-            self.log.emit(f"正在打开 µTorrent，下载目录：{save_path}")
+            self.log.emit(f"正在打开 uTorrent，下载目录：{save_path}")
             utorrent = UTorrentClient(UTorrentConfig(
                 executable=self.config.utorrent_executable,
                 webui_url=self.config.utorrent_webui_url,
@@ -140,168 +149,33 @@ class SeedWorker(QThread):
                 password=self.config.utorrent_webui_password,
             ))
             utorrent.open_torrent(final_torrent, save_path=save_path)
-            self.log.emit("µTorrent 已启动，等待做种...")
+            self.log.emit("uTorrent 已启动，等待做种...")
 
             self.finished_ok.emit(
-                "µTorrent 已打开种子文件，下载完成后会自动做种。\n请保持 µTorrent 运行。",
-                detail_url,
-                remaining_quota,
+                "uTorrent 已打开种子文件，下载完成后会自动做种。\n请保持 uTorrent 运行。",
+                self.detail_url,
             )
-        except Exception as exc:
-            self.failed.emit(str(exc))
-
-    def _browser_upload(self, torrent_path: Path) -> tuple[str, str, str]:
-        """Run Selenium browser upload. Returns (detail_url, saved_torrent_path, remaining_quota)."""
-        import subprocess
-
-        script_path = _find_script("browser_upload.py")
-        python_exe = _find_selenium_python()
-
-        cmd = [
-            python_exe, str(script_path),
-            self.config.upload_url,
-            str(torrent_path.resolve()),
-            self.draft.title,
-            self.draft.subtitle or "",
-            self.draft.description or "",
-            self.draft.category or "0",
-            " ".join(self.draft.tags) if self.draft.tags else "",
-            "--profile-dir", SELENIUM_PROFILE_DIR,
-        ]
-        if self.config.headless_upload:
-            cmd.append("--headless")
-        cmd.extend(["--browser", self.config.browser])
-
-        self.log.emit("浏览器上传中...")
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120,
-                                creationflags=subprocess.CREATE_NO_WINDOW)
-
-        for line in result.stderr.splitlines():
-            self.log.emit(line)
-
-        if result.returncode != 0:
-            raise RuntimeError(f"浏览器上传失败（退出码 {result.returncode}）")
-
-        lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-        detail_url = ""
-        torrent_path = ""
-        remaining_quota = ""
-        for line in lines:
-            if line.startswith("quota:"):
-                remaining_quota = line.removeprefix("quota:")
-            elif line.startswith("http"):
-                if not detail_url:
-                    detail_url = line
-            elif line.endswith(".torrent") or "tmp" in line.lower():
-                torrent_path = line
-        return detail_url, torrent_path, remaining_quota
-
-
-class LoginWorker(QThread):
-    """Run browser login script in a background thread."""
-    log = Signal(str)
-    finished_ok = Signal()
-    failed = Signal(str)
-
-    def __init__(self, site_url: str, browser: str = "edge") -> None:
-        super().__init__()
-        self.site_url = site_url
-        self.browser = browser
-
-    def run(self) -> None:
-        import subprocess
-
-        try:
-            script_path = _find_script("browser_login.py")
-            python_exe = _find_selenium_python()
-
-            cmd = [python_exe, str(script_path), self.site_url, SELENIUM_PROFILE_DIR,
-                   "--browser", self.browser]
-            self.log.emit("正在打开浏览器，请在窗口中登录...")
-
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=360,
-                                    creationflags=subprocess.CREATE_NO_WINDOW)
-
-            for line in result.stderr.splitlines():
-                self.log.emit(line)
-
-            if result.returncode != 0:
-                self.failed.emit("登录失败或超时。")
-                return
-
-            self.finished_ok.emit()
         except Exception as exc:
             self.failed.emit(str(exc))
 
 
 class QuotaWorker(QThread):
-    """Fetch daily upload quota from the upload page."""
-    result = Signal(str)  # quota text like "4", or "" on failure
+    """Fetch daily upload quota via HTTP."""
+    result = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, upload_url: str, profile_dir: str, browser: str = "edge") -> None:
+    def __init__(self, upload_url: str, cookie_header: str) -> None:
         super().__init__()
         self.upload_url = upload_url
-        self.profile_dir = profile_dir
-        self.browser = browser
+        self.cookie_header = cookie_header
 
     def run(self) -> None:
-        import subprocess
         try:
-            script_path = _find_script("fetch_quota.py")
-            python_exe = _find_selenium_python()
-            cmd = [python_exe, str(script_path), self.upload_url, self.profile_dir,
-                   "--browser", self.browser]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30,
-                                    creationflags=subprocess.CREATE_NO_WINDOW)
-            quota = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else ""
+            quota = _fetch_quota_via_http(self.upload_url, self.cookie_header)
             if quota:
                 self.result.emit(quota)
             else:
                 self.failed.emit("无法获取上传次数")
-        except Exception as exc:
-            self.failed.emit(str(exc))
-
-
-class BrowserTestWorker(QThread):
-    """Test if the selected browser driver is available."""
-    log = Signal(str)
-    finished_ok = Signal(str)  # browser name
-    failed = Signal(str)
-
-    def __init__(self, browser: str) -> None:
-        super().__init__()
-        self.browser = browser
-
-    def run(self) -> None:
-        import subprocess
-        try:
-            python_exe = _find_selenium_python()
-            browser = self.browser
-            self.log.emit(f"正在检测 {browser} 浏览器驱动...")
-
-            code = (
-                "from driver_factory import create_driver; "
-                f"d = create_driver('{browser}', '', headless=True); "
-                "d.quit(); print('OK')"
-            )
-            cmd = [python_exe, "-c", code]
-            scripts_dir = _find_script("driver_factory.py").parent
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60,
-                                     cwd=str(scripts_dir),
-                                     creationflags=subprocess.CREATE_NO_WINDOW)
-
-            for line in result.stderr.splitlines():
-                line = line.strip()
-                if line:
-                    self.log.emit(line)
-
-            if result.returncode == 0 and "OK" in result.stdout:
-                self.finished_ok.emit(browser)
-            else:
-                self.failed.emit(f"{browser} 驱动检测失败")
-        except subprocess.TimeoutExpired:
-            self.failed.emit("检测超时，可能正在下载驱动，请稍后重试")
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -318,10 +192,11 @@ class MainWindow(QMainWindow):
             LOGGER.exception("failed to load saved app config")
             self.config = AppConfig()
         self.draft: ResourceDraft | None = None
-        self._seed_worker: SeedWorker | None = None
-        self._login_worker: LoginWorker | None = None
+        self._create_torrent_worker: CreateTorrentWorker | None = None
+        self._download_final_worker: DownloadFinalTorrentWorker | None = None
         self._quota_worker: QuotaWorker | None = None
         self._remaining_quota: int | None = None
+        self._torrent_path: Path | None = None
         self._build_ui()
         self.log(f"已加载本机配置：{user_config_path()}")
         self._check_first_run()
@@ -351,11 +226,6 @@ class MainWindow(QMainWindow):
         self.webui_url_input.setText(self.config.utorrent_webui_url)
         self.webui_user_input.setText(self.config.utorrent_webui_username)
         self.webui_password_input.setText(self.config.utorrent_webui_password)
-        self.headless_checkbox.setChecked(self.config.headless_upload)
-        for i in range(self.browser_input.count()):
-            if self.browser_input.itemData(i) == self.config.browser:
-                self.browser_input.setCurrentIndex(i)
-                break
 
     def _build_main_tab(self) -> QWidget:
         page = QWidget()
@@ -464,7 +334,7 @@ class MainWindow(QMainWindow):
         tracker_actions.addWidget(tracker_from_sample_button)
         tracker_actions.addWidget(tracker_from_file_button)
 
-        # Login credentials section
+        # Login credentials section — uses embedded WebEngine browser
         login_layout = QHBoxLayout()
         self._login_status_label = QLabel("未配置")
         self._login_status_label.setStyleSheet("color: #E65100;")
@@ -493,34 +363,18 @@ class MainWindow(QMainWindow):
         self.webui_user_input = QLineEdit(self.config.utorrent_webui_username)
         self.webui_password_input = QLineEdit(self.config.utorrent_webui_password)
         self.webui_password_input.setEchoMode(QLineEdit.Password)
-        self.browser_input = QComboBox()
-        self.browser_input.addItem("Microsoft Edge", "edge")
-        self.browser_input.addItem("Google Chrome", "chrome")
-        self.browser_input.addItem("Firefox", "firefox")
-        # Set current browser
-        for i in range(self.browser_input.count()):
-            if self.browser_input.itemData(i) == self.config.browser:
-                self.browser_input.setCurrentIndex(i)
-                break
-        self.browser_input.currentIndexChanged.connect(lambda _: self.save_settings(silent=True))
-        browser_actions = QHBoxLayout()
-        test_browser_button = QPushButton("检测浏览器")
-        test_browser_button.clicked.connect(self._test_browser)
-        browser_actions.addWidget(self.browser_input, 1)
-        browser_actions.addWidget(test_browser_button)
+        self.show_upload_window_checkbox = QCheckBox("上传时显示浏览器窗口")
+        self.show_upload_window_checkbox.setChecked(self.config.show_upload_window)
+        self.show_upload_window_checkbox.stateChanged.connect(lambda _: self.save_settings(silent=True))
 
-        self.headless_checkbox = QCheckBox("上传时隐藏浏览器窗口")
-        self.headless_checkbox.setChecked(self.config.headless_upload)
-        self.headless_checkbox.stateChanged.connect(lambda _: self.save_settings(silent=True))
         layout.addRow("金凤站点地址", self.site_url_input)
         layout.addRow("Tracker 地址", tracker_actions)
         layout.addRow("登录凭证", login_layout)
-        layout.addRow("浏览器", browser_actions)
         layout.addRow("µTorrent 路径", utorrent_actions)
         layout.addRow("µTorrent WebUI", self.webui_url_input)
         layout.addRow("WebUI 用户名", self.webui_user_input)
         layout.addRow("WebUI 密码", self.webui_password_input)
-        layout.addRow("", self.headless_checkbox)
+        layout.addRow("", self.show_upload_window_checkbox)
 
         for line_edit in (
             self.site_url_input,
@@ -536,9 +390,7 @@ class MainWindow(QMainWindow):
     # --- Login credential management ---
 
     def _update_login_status(self) -> None:
-        """Update the login status label based on whether a profile exists."""
-        profile = Path(SELENIUM_PROFILE_DIR)
-        has_login = profile.exists() and any(profile.rglob("Cookies"))
+        has_login = bool(self.config.cookie_header)
         if has_login:
             self._login_status_label.setText("已配置")
             self._login_status_label.setStyleSheet("color: #4CAF50; font-weight: bold;")
@@ -547,54 +399,50 @@ class MainWindow(QMainWindow):
             self._login_status_label.setStyleSheet("color: #E65100;")
 
     def _start_login(self) -> None:
-        """Open Selenium browser for user to log in."""
         self._login_btn.setEnabled(False)
         self._login_btn.setText("登录中...")
-        self._login_status_label.setText("请在浏览器窗口中登录...")
+        self._login_status_label.setText("正在打开内置浏览器...")
         self._login_status_label.setStyleSheet("color: #1565C0; font-weight: bold;")
-        self._login_worker = LoginWorker(self.config.site_base_url, self.config.browser)
-        self._login_worker.log.connect(self.log)
-        self._login_worker.finished_ok.connect(self._on_login_success)
-        self._login_worker.failed.connect(self._on_login_failed)
-        self._login_worker.start()
-        self.log("正在打开浏览器进行登录配置...")
+        self.log("正在打开内置浏览器进行登录配置...")
 
-    def _on_login_success(self) -> None:
-        self._login_btn.setEnabled(True)
-        self._login_btn.setText("配置登录")
-        self._update_login_status()
-        self.log("登录凭证已保存。")
-        self._refresh_quota()
-        QMessageBox.information(self, "登录成功", "登录凭证已保存，现在可以使用一键做种功能。")
-
-    def _on_login_failed(self, message: str) -> None:
-        self._login_btn.setEnabled(True)
-        self._login_btn.setText("配置登录")
-        self._update_login_status()
-        self.log(f"登录失败：{message}")
-        QMessageBox.warning(self, "登录失败", message)
+        dialog = WebEngineLoginDialog(self.config.site_base_url, self)
+        if dialog.exec() == QDialog.Accepted:
+            cookie = dialog.cookie_header
+            if cookie:
+                self.config.cookie_header = cookie
+                save_app_config(self.config)
+                self._update_login_status()
+                self.log("登录凭证已保存。")
+                self._refresh_quota()
+                self._login_btn.setEnabled(True)
+                self._login_btn.setText("配置登录")
+                QMessageBox.information(self, "登录成功", "登录凭证已保存，现在可以使用一键做种功能。")
+            else:
+                self._login_btn.setEnabled(True)
+                self._login_btn.setText("配置登录")
+                self._update_login_status()
+                self.log("登录失败：未能提取到 Cookie。")
+                QMessageBox.warning(self, "登录失败", "未能提取到有效的登录 Cookie，请重试。")
+        else:
+            self._login_btn.setEnabled(True)
+            self._login_btn.setText("配置登录")
+            self._update_login_status()
+            self.log("登录已取消。")
 
     def _clear_login(self) -> None:
-        """Clear saved login credentials."""
-        import shutil
-        profile = Path(SELENIUM_PROFILE_DIR)
-        if profile.exists():
-            # Delete cached cookies file if present
-            cookies_file = profile / "cookies.json"
-            cookies_file.unlink(missing_ok=True)
-            shutil.rmtree(profile, ignore_errors=True)
-            self.log("已清除登录凭证。")
+        self.config.cookie_header = ""
+        save_app_config(self.config)
+        self.log("已清除登录凭证。")
         self._update_login_status()
         self._quota_label.setText("今日剩余上传次数：请先配置登录")
 
     # --- Quota ---
 
     def _refresh_quota(self) -> None:
-        profile = Path(SELENIUM_PROFILE_DIR)
-        if not profile.exists() or not any(profile.rglob("Cookies")):
+        if not self.config.cookie_header:
             self._quota_label.setText("今日剩余上传次数：请先配置登录")
             return
-        self._quota_worker = QuotaWorker(self.config.upload_url, SELENIUM_PROFILE_DIR, self.config.browser)
+        self._quota_worker = QuotaWorker(self.config.upload_url, self.config.cookie_header)
         self._quota_worker.result.connect(self._on_quota_result)
         self._quota_worker.failed.connect(self._on_quota_failed)
         self._quota_worker.start()
@@ -607,8 +455,8 @@ class MainWindow(QMainWindow):
         self._update_quota_label()
 
     def _on_quota_failed(self, msg: str) -> None:
-        self._quota_label.setText("今日剩余上传次数：获取失败")
-        self.log(f"获取上传次数失败：{msg}")
+        self.log(f"获取上传次数失败：{msg}（仅提示，不影响上传功能）")
+        self._update_quota_label()
 
     def _update_quota_label(self) -> None:
         if self._remaining_quota is not None:
@@ -629,12 +477,10 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "需要确认", "请先确认上传内容符合规则。")
             return
 
-        # Check login credentials
-        profile = Path(SELENIUM_PROFILE_DIR)
-        if not profile.exists() or not any(profile.rglob("Cookies")):
+        if not self.config.cookie_header:
             QMessageBox.warning(
                 self, "未配置登录",
-                "请先在「设置」页面配置登录凭证，然后再使用一键做种功能。"
+                "请先在「设置」页面点击「配置登录」登录金凤站点，然后再使用一键做种功能。"
             )
             return
 
@@ -668,30 +514,73 @@ class MainWindow(QMainWindow):
 
         self.seed_button.setEnabled(False)
         self.progress.setRange(0, 0)
-        self._seed_worker = SeedWorker(self.config, self.draft)
-        self._seed_worker.log.connect(self.log)
-        self._seed_worker.finished_ok.connect(self._on_seed_success)
-        self._seed_worker.failed.connect(self._on_seed_failed)
-        self._seed_worker.start()
 
-    def _on_seed_success(self, message: str, detail_url: str, remaining_quota: str) -> None:
+        # Step 1: Create torrent in background
+        self._create_torrent_worker = CreateTorrentWorker(self.config, self.draft)
+        self._create_torrent_worker.log.connect(self.log)
+        self._create_torrent_worker.finished_ok.connect(self._on_torrent_created)
+        self._create_torrent_worker.failed.connect(self._on_seed_failed)
+        self._create_torrent_worker.start()
+
+    def _on_torrent_created(self, torrent_path: Path) -> None:
+        """Torrent created, now open WebEngine upload dialog."""
+        self._torrent_path = torrent_path
+        self.log("种子已生成，正在打开上传窗口...")
+
+        # Step 2: Open WebEngine upload dialog (must be in main thread)
+        dialog = WebEngineUploadDialog(
+            self.config.site_base_url,
+            self.draft,
+            torrent_path,
+            self.config.cookie_header,
+            self.config.show_upload_window,
+            self,
+        )
+        if dialog.exec() == QDialog.Accepted:
+            detail_url = dialog.detail_url
+            torrent_url = dialog.torrent_url
+
+            if not detail_url:
+                self._on_seed_failed("上传失败，未获取到详情页链接。")
+                return
+
+            self.log(f"上传成功，详情页：{detail_url}")
+
+            if not torrent_url:
+                self.log("未找到种子下载链接，请手动从详情页下载。")
+                self._on_seed_success(
+                    "上传成功，但未找到种子下载链接。\n请手动从详情页下载种子并添加到 uTorrent。",
+                    detail_url,
+                )
+                return
+
+            # Step 3: Download final torrent and open uTorrent
+            self._download_final_worker = DownloadFinalTorrentWorker(
+                self.config, self.draft, detail_url, torrent_url
+            )
+            self._download_final_worker.log.connect(self.log)
+            self._download_final_worker.finished_ok.connect(
+                lambda msg, url: self._on_seed_success(msg, url)
+            )
+            self._download_final_worker.failed.connect(self._on_seed_failed)
+            self._download_final_worker.start()
+        else:
+            self.seed_button.setEnabled(True)
+            self.progress.setRange(0, 100)
+            self.progress.setValue(0)
+            self.log("上传已取消。")
+
+    def _on_seed_success(self, message: str, detail_url: str) -> None:
         self.seed_button.setEnabled(True)
         self.progress.setRange(0, 100)
         self.progress.setValue(100)
         self.statusBar().clearMessage()
         self.log("做种完成！")
 
-        # Update quota: server value is pre-upload, decrement by 1 for this upload
-        if remaining_quota:
-            try:
-                self._remaining_quota = int(remaining_quota) - 1
-            except ValueError:
-                pass
-        elif self._remaining_quota is not None:
+        if self._remaining_quota is not None:
             self._remaining_quota -= 1
         self._update_quota_label()
 
-        # Show dialog with two buttons
         box = QMessageBox(self)
         box.setWindowTitle("完成")
         box.setText(message)
@@ -786,18 +675,6 @@ class MainWindow(QMainWindow):
         self.log("µTorrent WebUI 检测通过。")
         QMessageBox.information(self, "WebUI 可用", "µTorrent WebUI 已连接成功，设置已保存。")
 
-    def _test_browser(self) -> None:
-        browser = self.browser_input.currentData()
-        self._browser_test_worker = BrowserTestWorker(browser)
-        self._browser_test_worker.log.connect(self.log)
-        self._browser_test_worker.finished_ok.connect(
-            lambda b: QMessageBox.information(self, "检测通过", f"{b} 浏览器驱动可用。")
-        )
-        self._browser_test_worker.failed.connect(
-            lambda msg: QMessageBox.warning(self, "检测失败", msg)
-        )
-        self._browser_test_worker.start()
-
     def auto_configure(self) -> None:
         messages: list[str] = []
         if not self.tracker_input.text().strip():
@@ -838,8 +715,7 @@ class MainWindow(QMainWindow):
         self.config.utorrent_webui_url = self.webui_url_input.text().strip() or AppConfig().utorrent_webui_url
         self.config.utorrent_webui_username = self.webui_user_input.text().strip()
         self.config.utorrent_webui_password = self.webui_password_input.text()
-        self.config.headless_upload = self.headless_checkbox.isChecked()
-        self.config.browser = self.browser_input.currentData()
+        self.config.show_upload_window = self.show_upload_window_checkbox.isChecked()
 
     def choose_folder(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "选择要分享的文件夹")
