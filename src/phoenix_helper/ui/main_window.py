@@ -241,7 +241,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(tabs)
 
     def _check_first_run(self) -> None:
-        if not self.config.utorrent_webui_url:
+        if not self.config.utorrent_executable:
             self.log("首次运行，打开配置向导...")
             self._show_setup_dialog()
 
@@ -254,168 +254,208 @@ class MainWindow(QMainWindow):
 
     def _sync_inputs_from_config(self) -> None:
         self.utorrent_exe_input.setText(self.config.utorrent_executable)
-        self.webui_url_input.setText(self.config.utorrent_webui_url)
-        self.webui_user_input.setText(self.config.utorrent_webui_username)
-        self.webui_password_input.setText(self.config.utorrent_webui_password)
 
     def _build_main_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setSpacing(8)
 
+        # Quota badge + file selection in one row
+        top_row = QHBoxLayout()
         self._quota_label = QLabel("今日剩余上传次数：--")
-        self._quota_label.setAlignment(Qt.AlignCenter)
         self._quota_label.setStyleSheet(
             "QLabel {"
-            "  background-color: #E3F2FD;"
-            "  border: 1px solid #90CAF9;"
-            "  border-radius: 4px;"
-            "  padding: 6px 12px;"
-            "  font-size: 13px;"
-            "  font-weight: bold;"
+            "  background: #E3F2FD;"
+            "  border-radius: 3px;"
+            "  padding: 3px 10px;"
+            "  font-size: 12px;"
             "  color: #1565C0;"
             "}"
         )
-        layout.addWidget(self._quota_label)
+        top_row.addWidget(self._quota_label)
+        top_row.addStretch(1)
+        choose_file_button = QPushButton("选择文件")
+        choose_folder_button = QPushButton("选择文件夹")
+        choose_file_button.setStyleSheet(
+            "QPushButton { font-size: 13px; padding: 6px 16px; color: #1976D2; border: 1px solid #1976D2; border-radius: 3px; background: white; }"
+            "QPushButton:hover { background: #E3F2FD; }"
+        )
+        choose_folder_button.setStyleSheet(
+            "QPushButton { font-size: 13px; padding: 6px 16px; color: #1976D2; border: 1px solid #1976D2; border-radius: 3px; background: white; }"
+            "QPushButton:hover { background: #E3F2FD; }"
+        )
+        choose_file_button.clicked.connect(self.choose_file)
+        choose_folder_button.clicked.connect(self.choose_folder)
+        top_row.addWidget(choose_file_button)
+        top_row.addWidget(choose_folder_button)
+        layout.addLayout(top_row)
 
-        self._drop_hint = QLabel("拖放文件或文件夹到此处，或点击下方按钮选择")
+        # Drop hint
+        self._drop_hint = QLabel("拖放文件或文件夹到此处")
         self._drop_hint.setAlignment(Qt.AlignCenter)
         self._drop_hint.setStyleSheet(
             "QLabel {"
-            "  border: 2px dashed #aaa;"
-            "  border-radius: 8px;"
-            "  padding: 20px;"
-            "  color: #888;"
-            "  font-size: 14px;"
+            "  border: 2px dashed #ccc;"
+            "  border-radius: 6px;"
+            "  padding: 14px;"
+            "  color: #999;"
+            "  font-size: 13px;"
             "}"
         )
-        self._drop_hint.setMinimumHeight(80)
+        self._drop_hint.setMinimumHeight(60)
         layout.addWidget(self._drop_hint)
 
-        choose_layout = QHBoxLayout()
+        # Path + summary
         self.path_label = QLabel("尚未选择资源")
-        choose_file_button = QPushButton("选择文件")
-        choose_folder_button = QPushButton("选择文件夹")
-        choose_file_button.clicked.connect(self.choose_file)
-        choose_folder_button.clicked.connect(self.choose_folder)
-        choose_layout.addWidget(choose_file_button)
-        choose_layout.addWidget(choose_folder_button)
-        choose_layout.addWidget(self.path_label, 1)
-        layout.addLayout(choose_layout)
-
-        self.summary_label = QLabel("文件数量：0，总大小：0 B")
+        self.path_label.setStyleSheet("color: #666; font-size: 12px;")
+        self.summary_label = QLabel("")
+        self.summary_label.setStyleSheet("color: #999; font-size: 11px;")
+        layout.addWidget(self.path_label)
         layout.addWidget(self.summary_label)
 
+        # Form
         form_group = QGroupBox("资源信息")
         form = QFormLayout(form_group)
+        form.setSpacing(6)
         self.title_input = QLineEdit()
-        self.subtitle_input = QLineEdit()
+        self.title_input.setPlaceholderText("种子名称（必填）")
         self.description_input = QPlainTextEdit()
-        self.description_input.setMinimumHeight(160)
+        self.description_input.setPlaceholderText("写一点种子的说明是美德（必填）")
+        self.description_input.setMinimumHeight(120)
         self.category_input = QComboBox()
         for value, label in CATEGORIES:
             self.category_input.addItem(label, value)
         self.tags_input = QLineEdit()
-        self.tags_input.setPlaceholderText("多个标签用空格分隔")
+        self.tags_input.setPlaceholderText("多个标签用空格分隔，如：动漫 高清")
         form.addRow("标题", self.title_input)
-        form.addRow("副标题", self.subtitle_input)
         form.addRow("简介", self.description_input)
         form.addRow("分类", self.category_input)
         form.addRow("标签", self.tags_input)
         layout.addWidget(form_group)
 
-        self.compliance_checkbox = QCheckBox("我确认上传内容符合校园网和站点规则，不包含违法违规或未授权传播内容。")
+        # Compliance
+        self.compliance_checkbox = QCheckBox("我确认上传内容符合校园网和站点规则")
+        self.compliance_checkbox.setStyleSheet("font-size: 12px; color: #666;")
         layout.addWidget(self.compliance_checkbox)
 
+        # Seed button
         action_layout = QHBoxLayout()
         self.seed_button = QPushButton("一键做种")
+        self.seed_button.setStyleSheet(
+            "QPushButton {"
+            "  background: #1976D2;"
+            "  color: white;"
+            "  border: none;"
+            "  border-radius: 4px;"
+            "  padding: 10px 32px;"
+            "  font-size: 15px;"
+            "  font-weight: bold;"
+            "}"
+            "QPushButton:hover { background: #1565C0; }"
+            "QPushButton:disabled { background: #BBDEFB; }"
+            "QPushButton:pressed { background: #0D47A1; }"
+        )
         self.seed_button.clicked.connect(self.start_seed)
         action_layout.addStretch(1)
         action_layout.addWidget(self.seed_button)
+        action_layout.addStretch(1)
         layout.addLayout(action_layout)
 
+        # Progress
         self.progress = QProgressBar()
+        self.progress.setFixedHeight(6)
+        self.progress.setTextVisible(False)
         self.progress.setRange(0, 100)
+        self.progress.setStyleSheet(
+            "QProgressBar { border: none; background: #E0E0E0; border-radius: 3px; }"
+            "QProgressBar::chunk { background: #1976D2; border-radius: 3px; }"
+        )
         layout.addWidget(self.progress)
 
+        # Log
         self.log_box = LogBox()
+        self.log_box.setMaximumHeight(140)
+        self.log_box.setStyleSheet(
+            "QTextEdit {"
+            "  background: #F5F5F5;"
+            "  border: 1px solid #E0E0E0;"
+            "  border-radius: 3px;"
+            "  padding: 6px;"
+            "  font-family: Consolas, monospace;"
+            "  font-size: 11px;"
+            "  color: #333;"
+            "}"
+        )
         layout.addWidget(self.log_box)
         return page
 
     def _build_settings_tab(self) -> QWidget:
         page = QWidget()
-        layout = QFormLayout(page)
-        settings_actions = QHBoxLayout()
-        auto_config_button = QPushButton("一键配置")
-        save_settings_button = QPushButton("保存设置")
-        auto_config_button.clicked.connect(self.auto_configure)
-        save_settings_button.clicked.connect(self.save_settings)
-        settings_actions.addWidget(auto_config_button)
-        settings_actions.addWidget(save_settings_button)
-        settings_actions.addStretch(1)
-        layout.addRow("", settings_actions)
+        layout = QVBoxLayout(page)
+        layout.setSpacing(12)
 
-        self.site_url_input = QLineEdit(self.config.site_base_url)
+        # Top action bar
+        top_bar = QHBoxLayout()
+        save_settings_button = QPushButton("保存设置")
+        save_settings_button.setStyleSheet(
+            "QPushButton { padding: 6px 20px; font-weight: bold; }"
+        )
+        save_settings_button.clicked.connect(lambda: self.save_settings(silent=False))
+        top_bar.addWidget(save_settings_button)
+        top_bar.addStretch(1)
+        layout.addLayout(top_bar)
+
+        # --- Login section ---
+        login_group = QGroupBox("站点登录")
+        login_form = QFormLayout(login_group)
+        self._login_status_label = QLabel("未配置")
+        self._login_status_label.setStyleSheet("color: #E65100; font-size: 12px;")
+        self._login_btn = QPushButton("登录")
+        self._login_btn.clicked.connect(self._start_login)
+        clear_login_btn = QPushButton("清除")
+        clear_login_btn.clicked.connect(self._clear_login)
+        login_actions = QHBoxLayout()
+        login_actions.addWidget(self._login_status_label, 1)
+        login_actions.addWidget(self._login_btn)
+        login_actions.addWidget(clear_login_btn)
+        login_form.addRow("状态", login_actions)
+        layout.addWidget(login_group)
+
+        # --- Tracker section ---
+        tracker_group = QGroupBox("Tracker")
+        tracker_form = QFormLayout(tracker_group)
         self.tracker_input = QLineEdit(self.config.tracker_url)
         tracker_actions = QHBoxLayout()
         tracker_from_sample_button = QPushButton("从测试种子读取")
-        tracker_from_file_button = QPushButton("选择种子读取")
+        tracker_from_file_button = QPushButton("从文件读取")
         tracker_from_sample_button.clicked.connect(self.fill_tracker_from_sample)
         tracker_from_file_button.clicked.connect(self.fill_tracker_from_file)
         tracker_actions.addWidget(self.tracker_input, 1)
         tracker_actions.addWidget(tracker_from_sample_button)
         tracker_actions.addWidget(tracker_from_file_button)
+        tracker_form.addRow("地址", tracker_actions)
+        layout.addWidget(tracker_group)
 
-        # Login credentials section — uses HTTP login dialog
-        login_layout = QHBoxLayout()
-        self._login_status_label = QLabel("未配置")
-        self._login_status_label.setStyleSheet("color: #E65100;")
-        self._login_btn = QPushButton("配置登录")
-        self._login_btn.clicked.connect(self._start_login)
-        clear_login_btn = QPushButton("清除")
-        clear_login_btn.clicked.connect(self._clear_login)
-        login_layout.addWidget(self._login_status_label, 1)
-        login_layout.addWidget(self._login_btn)
-        login_layout.addWidget(clear_login_btn)
-
+        # --- uTorrent section ---
+        ut_group = QGroupBox("uTorrent 路径")
+        ut_form = QFormLayout(ut_group)
         self.utorrent_exe_input = QLineEdit(self.config.utorrent_executable)
-        utorrent_actions = QHBoxLayout()
+        ut_actions = QHBoxLayout()
         browse_utorrent_button = QPushButton("浏览")
         find_utorrent_button = QPushButton("自动查找")
-        test_webui_button = QPushButton("检测 WebUI")
         browse_utorrent_button.clicked.connect(self.browse_utorrent)
         find_utorrent_button.clicked.connect(self.fill_utorrent_path)
-        test_webui_button.clicked.connect(self.test_utorrent_webui)
-        utorrent_actions.addWidget(self.utorrent_exe_input, 1)
-        utorrent_actions.addWidget(browse_utorrent_button)
-        utorrent_actions.addWidget(find_utorrent_button)
-        utorrent_actions.addWidget(test_webui_button)
+        ut_actions.addWidget(self.utorrent_exe_input, 1)
+        ut_actions.addWidget(browse_utorrent_button)
+        ut_actions.addWidget(find_utorrent_button)
+        ut_form.addRow("可执行文件", ut_actions)
+        layout.addWidget(ut_group)
 
-        self.webui_url_input = QLineEdit(self.config.utorrent_webui_url)
-        self.webui_user_input = QLineEdit(self.config.utorrent_webui_username)
-        self.webui_password_input = QLineEdit(self.config.utorrent_webui_password)
-        self.webui_password_input.setEchoMode(QLineEdit.Password)
-        self.show_upload_window_checkbox = QCheckBox("上传时显示浏览器窗口")
-        self.show_upload_window_checkbox.setChecked(self.config.show_upload_window)
-        self.show_upload_window_checkbox.stateChanged.connect(lambda _: self.save_settings(silent=True))
+        # Auto-save on field edit
+        for line_edit in (self.tracker_input, self.utorrent_exe_input):
+            line_edit.editingFinished.connect(lambda le=line_edit: self.save_settings(silent=True))
 
-        layout.addRow("金凤站点地址", self.site_url_input)
-        layout.addRow("Tracker 地址", tracker_actions)
-        layout.addRow("登录凭证", login_layout)
-        layout.addRow("µTorrent 路径", utorrent_actions)
-        layout.addRow("µTorrent WebUI", self.webui_url_input)
-        layout.addRow("WebUI 用户名", self.webui_user_input)
-        layout.addRow("WebUI 密码", self.webui_password_input)
-        layout.addRow("", self.show_upload_window_checkbox)
-
-        for line_edit in (
-            self.site_url_input,
-            self.tracker_input,
-            self.utorrent_exe_input,
-            self.webui_url_input,
-            self.webui_user_input,
-            self.webui_password_input,
-        ):
-            line_edit.editingFinished.connect(lambda line_edit=line_edit: self.save_settings(silent=True))
+        layout.addStretch(1)
         return page
 
     # --- Login credential management ---
@@ -519,7 +559,6 @@ class MainWindow(QMainWindow):
         save_app_config(self.config)
 
         self.draft.title = self.title_input.text().strip()
-        self.draft.subtitle = self.subtitle_input.text().strip()
         self.draft.description = self.description_input.toPlainText().strip()
         self.draft.category = str(self.category_input.currentData())
         self.draft.tags = [tag for tag in self.tags_input.text().split() if tag]
@@ -691,34 +730,8 @@ class MainWindow(QMainWindow):
             )
             return
         self.save_settings(silent=True)
-        self.log("µTorrent WebUI 检测通过。")
-        QMessageBox.information(self, "WebUI 可用", "µTorrent WebUI 已连接成功，设置已保存。")
-
-    def auto_configure(self) -> None:
-        messages: list[str] = []
-        if not self.tracker_input.text().strip():
-            tracker = discover_tracker_from_default_sample()
-            if tracker:
-                self.tracker_input.setText(tracker)
-                messages.append("已读取 Tracker")
-            else:
-                messages.append("未找到测试种子 Tracker")
-
-        if not self.utorrent_exe_input.text().strip():
-            utorrent_path = find_utorrent_executable()
-            if utorrent_path is not None:
-                self.utorrent_exe_input.setText(str(utorrent_path))
-                messages.append("已找到 µTorrent")
-            else:
-                messages.append("未找到 µTorrent")
-
-        if not self.site_url_input.text().strip():
-            self.site_url_input.setText(AppConfig().site_base_url)
-
-        self.save_settings(silent=True)
-        summary = "；".join(messages) if messages else "设置已保存"
-        self.log(f"一键配置完成：{summary}")
-        QMessageBox.information(self, "一键配置完成", summary)
+        self.log("µTorrent 路径已设置。")
+        QMessageBox.information(self, "已保存", f"µTorrent 路径已保存。")
 
     def save_settings(self, silent: bool = False) -> None:
         self._sync_config_from_inputs()
@@ -728,13 +741,8 @@ class MainWindow(QMainWindow):
         self.log(f"设置已保存：{path}")
 
     def _sync_config_from_inputs(self) -> None:
-        self.config.site_base_url = self.site_url_input.text().strip() or AppConfig().site_base_url
         self.config.tracker_url = self.tracker_input.text().strip()
         self.config.utorrent_executable = self.utorrent_exe_input.text().strip()
-        self.config.utorrent_webui_url = self.webui_url_input.text().strip() or AppConfig().utorrent_webui_url
-        self.config.utorrent_webui_username = self.webui_user_input.text().strip()
-        self.config.utorrent_webui_password = self.webui_password_input.text()
-        self.config.show_upload_window = self.show_upload_window_checkbox.isChecked()
 
     def choose_folder(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "选择要分享的文件夹")
@@ -750,7 +758,6 @@ class MainWindow(QMainWindow):
         self.path_label.setText(str(self.draft.source_path))
         self.summary_label.setText(f"文件数量：{self.draft.file_count}，总大小：{format_size(self.draft.total_size)}")
         self.title_input.setText(self.draft.title)
-        self.subtitle_input.setText(self.draft.subtitle)
         self.description_input.setPlainText(self.draft.description)
         self.tags_input.setText(" ".join(self.draft.tags))
         self.log(f"已选择资源：{self.draft.source_path}")
