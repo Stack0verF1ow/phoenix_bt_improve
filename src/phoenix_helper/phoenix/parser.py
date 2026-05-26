@@ -29,12 +29,13 @@ def find_torrent_url(html: str, base_url: str) -> str:
 
 def extract_error_message(html: str) -> str:
     soup = BeautifulSoup(html, "html.parser")
-    for selector in ("#cpContent__cphContent_lblInfo", ".text-danger", ".validation-summary-errors"):
-        element = soup.select_one(selector)
-        if element:
-            text = element.get_text(" ", strip=True)
-            if text:
-                return text
+    # Only use the error label selector, not .text-danger (too broad — matches
+    # Bootstrap red styling used for non-error content on detail pages etc.)
+    element = soup.select_one("#cpContent__cphContent_lblInfo")
+    if element:
+        text = element.get_text(" ", strip=True)
+        if text:
+            return text
     return ""
 
 
