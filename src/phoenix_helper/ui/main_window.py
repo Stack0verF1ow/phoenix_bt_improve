@@ -37,6 +37,7 @@ from phoenix_helper.torrent.creator import create_torrent, recommended_piece_len
 from phoenix_helper.utils.paths import safe_filename, unique_path
 from phoenix_helper.ui.http_login_dialog import HttpLoginDialog
 from phoenix_helper.ui.setup_dialog import SetupDialog
+from phoenix_helper.ui.lan_tab import LanTab
 from phoenix_helper.ui.widgets import LogBox
 
 CATEGORIES = [
@@ -238,7 +239,12 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget()
         tabs.addTab(self._build_main_tab(), "一键做种")
         tabs.addTab(self._build_settings_tab(), "设置")
+        tabs.addTab(self._build_lan_tab(), "LAN传输")
         self.setCentralWidget(tabs)
+
+    def _build_lan_tab(self) -> QWidget:
+        self.lan_tab = LanTab(self.config, self)
+        return self.lan_tab
 
     def _check_first_run(self) -> None:
         if not self.config.utorrent_executable:
@@ -319,6 +325,8 @@ class MainWindow(QMainWindow):
         form.setSpacing(6)
         self.title_input = QLineEdit()
         self.title_input.setPlaceholderText("种子名称（必填）")
+        self.subtitle_input = QLineEdit()
+        self.subtitle_input.setPlaceholderText("副标题（选填）")
         self.description_input = QPlainTextEdit()
         self.description_input.setPlaceholderText("写一点种子的说明是美德（必填）")
         self.description_input.setMinimumHeight(120)
@@ -328,6 +336,7 @@ class MainWindow(QMainWindow):
         self.tags_input = QLineEdit()
         self.tags_input.setPlaceholderText("多个标签用空格分隔，如：动漫 高清")
         form.addRow("标题", self.title_input)
+        form.addRow("副标题", self.subtitle_input)
         form.addRow("简介", self.description_input)
         form.addRow("分类", self.category_input)
         form.addRow("标签", self.tags_input)
@@ -559,6 +568,7 @@ class MainWindow(QMainWindow):
         save_app_config(self.config)
 
         self.draft.title = self.title_input.text().strip()
+        self.draft.subtitle = self.subtitle_input.text().strip()
         self.draft.description = self.description_input.toPlainText().strip()
         self.draft.category = str(self.category_input.currentData())
         self.draft.tags = [tag for tag in self.tags_input.text().split() if tag]
@@ -758,6 +768,7 @@ class MainWindow(QMainWindow):
         self.path_label.setText(str(self.draft.source_path))
         self.summary_label.setText(f"文件数量：{self.draft.file_count}，总大小：{format_size(self.draft.total_size)}")
         self.title_input.setText(self.draft.title)
+        self.subtitle_input.setText(self.draft.subtitle)
         self.description_input.setPlainText(self.draft.description)
         self.tags_input.setText(" ".join(self.draft.tags))
         self.log(f"已选择资源：{self.draft.source_path}")
