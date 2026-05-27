@@ -17,10 +17,9 @@ GET  /api/files/download — stream a file for download
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
-import os
+import secrets
 import socket
 import threading
 import time
@@ -350,7 +349,7 @@ class LanRequestHandler(BaseHTTPRequestHandler):
                 "type": finfo.get("type", "application/octet-stream"),
             }
             session.file_ids.append(fid)
-            tok = hashlib.sha256(os.urandom(16)).hexdigest()[:12]
+            tok = secrets.token_hex(6)  # 12 hex chars
             session.file_tokens[fid] = tok
 
         LOGGER.info("Session %s prepared with %d files from %s",
@@ -632,7 +631,7 @@ class LanServer:
         if self._server:
             raise RuntimeError("Server already running")
 
-        self._full_token = hashlib.sha256(os.urandom(32)).hexdigest()
+        self._full_token = secrets.token_hex(32)  # 64 hex chars
         self.serve_dirs = serve_dirs
 
         LanRequestHandler.config = self.config
