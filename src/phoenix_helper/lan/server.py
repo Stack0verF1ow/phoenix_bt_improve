@@ -63,14 +63,63 @@ class _RateLimiter:
 _SESSION_TTL = 600.0  # seconds — sessions expire after 10 min
 
 
+class _ConnectedDevice:
+    __slots__ = ("ip", "name", "connected_at", "last_seen")
+
+    def __init__(self, ip: str, name: str = "") -> None:
+        self.ip = ip
+        self.name = name
+        self.connected_at = time.monotonic()
+        self.last_seen = time.monotonic()
+
+
+class _DeviceRegistry:
+    """Tracks devices that have completed registration."""
+
+    def __init__(self) -> None:
+        self._devices: dict[str, _ConnectedDevice] = {}  # ip -> device
+        self._lock = threading.Lock()
+
+    def register(self, ip: str, name: str = "") -> None:
+        with self._lock:
+            if ip in self._devices:
+                self._devices[ip].last_seen = time.monotonic()
+                if name:
+                    self._devices[ip].name = name
+            else:
+                self._devices[ip] = _ConnectedDevice(ip, name)
+
+    def unregister(self, ip: str) -> None:
+        with self._lock:
+            self._devices.pop(ip, None)
+
+    def list_devices(self) -> list[dict]:
+        now = time.monotonic()
+        with self._lock:
+            # Remove stale entries (no activity for 60s)
+            stale = [ip for ip, d in self._devices.items()
+                     if now - d.last_seen > 60.0]
+            for ip in stale:
+                del self._devices[ip]
+            return [
+                {
+                    "ip": d.ip,
+                    "name": d.name or d.ip,
+                    "connected_at": round(d.connected_at),
+                }
+                for d in self._devices.values()
+            ]
+
+
 class _Session:
-    __slots__ = ("id", "files", "file_ids", "received", "seed_data",
-                 "seed_status", "created_at", "peer_ip")
+    __slots__ = ("id", "files", "file_ids", "file_tokens", "received",
+                 "seed_data", "seed_status", "created_at", "peer_ip")
 
     def __init__(self, sid: str, peer_ip: str) -> None:
         self.id = sid
         self.files: dict[str, dict] = {}         # fileId -> {name, size, type}
         self.file_ids: list[str] = []
+        self.file_tokens: dict[str, str] = {}     # fileId -> token (for upload validation)
         self.received: dict[str, bytes] = {}      # fileId -> data
         self.seed_data: dict | None = None        # {title, category, …}
         self.seed_status: str = "idle"            # idle|seeding|done|error
@@ -133,6 +182,7 @@ class LanRequestHandler(BaseHTTPRequestHandler):
     server_ref: "LanServer | None" = None
     _limiter: _RateLimiter = _RateLimiter()
     _sessions: _SessionManager = _SessionManager()
+    _devices: _DeviceRegistry = _DeviceRegistry()
     _serve_dirs: list[Path] | None = None
 
     # ── helpers ───────────────────────────────────────────────
@@ -190,6 +240,8 @@ class LanRequestHandler(BaseHTTPRequestHandler):
         path = self.clean_path
         if path == "/api/status":
             self._handle_status()
+        elif path == "/api/devices":
+            self._handle_list_devices()
         elif path == "/api/files":
             self._handle_list_files()
         elif path.startswith("/api/files/download"):
@@ -232,7 +284,11 @@ class LanRequestHandler(BaseHTTPRequestHandler):
         if data.get("token") != self.qr_token:
             self._send_error(403, "Invalid token")
             return
-        LOGGER.info("Device registered from %s", self._client_ip)
+        device_name = data.get("device_name", "")
+        self._devices.register(self._client_ip, device_name)
+        LOGGER.info("Device '%s' registered from %s", device_name or "?", self._client_ip)
+        if self.server_ref and self.server_ref.on_device_connected:
+            self.server_ref.on_device_connected(self._client_ip, device_name)
         self._send_json(200, {
             "status": "ok",
             "session": self.full_token,
@@ -287,7 +343,6 @@ class LanRequestHandler(BaseHTTPRequestHandler):
             return
 
         session = self._sessions.create(self._client_ip)
-        file_tokens: dict[str, str] = {}
         for fid, finfo in files.items():
             session.files[fid] = {
                 "name": finfo.get("name", "unknown"),
@@ -295,13 +350,14 @@ class LanRequestHandler(BaseHTTPRequestHandler):
                 "type": finfo.get("type", "application/octet-stream"),
             }
             session.file_ids.append(fid)
-            file_tokens[fid] = hashlib.sha256(os.urandom(16)).hexdigest()[:12]
+            tok = hashlib.sha256(os.urandom(16)).hexdigest()[:12]
+            session.file_tokens[fid] = tok
 
         LOGGER.info("Session %s prepared with %d files from %s",
                     session.id, len(files), self._client_ip)
         self._send_json(200, {
             "sessionId": session.id,
-            "fileTokens": file_tokens,
+            "fileTokens": session.file_tokens,
             "expires_in": int(_SESSION_TTL),
         })
 
@@ -333,10 +389,8 @@ class LanRequestHandler(BaseHTTPRequestHandler):
             self._send_error(404, f"File '{fid}' not in session")
             return
 
-        expected = hashlib.sha256(
-            (sid + fid + self.full_token).encode()
-        ).hexdigest()[:12]
-        if token != expected:
+        expected_token = session.file_tokens.get(fid)
+        if not expected_token or token != expected_token:
             self._send_error(403, "Invalid file token")
             return
 
@@ -462,6 +516,11 @@ class LanRequestHandler(BaseHTTPRequestHandler):
         LOGGER.info("Session %s cancelled by peer", sid)
         self._send_json(200, {"status": "cancelled"})
 
+    def _handle_list_devices(self) -> None:
+        """GET /api/devices — list currently connected devices."""
+        self._send_json(200, {"devices": self._devices.list_devices(),
+                              "count": len(self._devices._devices)})
+
     def _handle_list_files(self) -> None:
         """GET /api/files — list files in served directories."""
         if not self._check_auth_and_rate():
@@ -553,6 +612,7 @@ class LanServer:
         self._thread: threading.Thread | None = None
         self.on_seed_ready: Callable | None = None
         self.on_file_received: Callable | None = None
+        self.on_device_connected: Callable | None = None
         self.serve_dirs: list[Path] | None = None
         self._full_token: str = ""
 
