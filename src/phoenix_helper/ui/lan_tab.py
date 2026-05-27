@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import socket
@@ -7,7 +8,6 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
-from urllib.request import urlopen
 
 from PySide6.QtCore import QThread, Signal, QObject
 from PySide6.QtWidgets import (
@@ -234,11 +234,13 @@ class LanTab(QWidget):
             try:
                 if self.server.is_running:
                     port = self.server.listen_port
-                    url = f"http://127.0.0.1:{port}/api/devices"
-                    resp = urlopen(url, timeout=2)
+                    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+                    conn.request("GET", "/api/devices")
+                    resp = conn.getresponse()
                     data = json.loads(resp.read().decode())
                     devices = data.get("devices", [])
                     self.signals.devices_updated.emit(devices)
+                    conn.close()
             except Exception:
                 pass
             self._poll_stop.wait(3)
