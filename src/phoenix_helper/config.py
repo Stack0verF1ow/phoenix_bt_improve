@@ -26,6 +26,9 @@ class AppConfig:
     temp_dir: Path = Path(".cache/phoenix-helper")
     generated_torrent_dir: Path = Path("torrents/generated")
     final_torrent_dir: Path = Path("torrents/final")
+    lan_port: int = 18080
+    device_name: str = ""
+    upload_receive_dir: Path = Path.home() / ".phoenix_helper" / "received_uploads"
 
     @property
     def upload_url(self) -> str:
