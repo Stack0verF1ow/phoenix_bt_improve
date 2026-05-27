@@ -9,7 +9,6 @@ description = "金凤 BT 本地一键做种助手"
 requires-python = ">=3.11"
 dependencies = [
     "PySide6>=6.7,<6.8",
-    "PySide6-WebEngine>=6.7,<6.8",
     "requests>=2.31",
     "beautifulsoup4>=4.12",
     "qrcode[pil]>=7.4",
