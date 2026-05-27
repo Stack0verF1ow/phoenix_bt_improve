@@ -1,15 +1,16 @@
 # 金凤本地做种助手
 
-一键完成制种、上传到金凤 PT 站、下载官方种子、调用 µTorrent 做种。
+一键完成制种、上传到金凤 PT 站、下载官方种子、调用 uTorrent 做种。
 
 ## 功能
 
 - 选择文件或文件夹，自动生成 .torrent 种子
-- Selenium 自动化上传到金凤网站（支持 Edge / Chrome / Firefox）
+- HTTP 直连上传到金凤网站（无需浏览器、无需 Selenium、无需 WebEngine）
+- 账号密码登录（无需打开浏览器提取 Cookie）
 - 自动下载站点返回的官方种子
-- 调用 µTorrent 打开种子做种
+- 调用 uTorrent 命令行启动做种
+- 自动检测 uTorrent 安装路径（支持跨盘搜索）
 - 显示每日剩余上传次数
-- 支持无头模式（后台上传，不弹出浏览器窗口）
 
 ## 快速开始
 
@@ -17,54 +18,49 @@
 
 从 `dist/` 目录获取打包好的程序：
 
-- `phoenix-helper.exe` — 单文件版本（66MB，首次启动可能较慢）
-- `phoenix-helper-dir/` — 文件夹版本（启动更快，推荐）
+- `phoenix-helper-http/` — 文件夹版本（114MB，推荐）
+- `phoenix-helper/` — 旧版（含 WebEngine 浏览器引擎，316MB）
 
-### 2. 首次配置
+### 2. 首次运行
 
-**µTorrent 配置**：
-
-​	![utorrent设置_01](README.assets/utorrent设置_01.png)
-
-![utorrent设置_02](README.assets/utorrent设置_02.png)
-
-![utorrent设置_03](README.assets/utorrent设置_03.png)
-
-1. 点击 **自动查找**（会搜索常见安装路径）
-2. 找不到时手动选择 `uTorrent.exe`
-3. 如使用 WebUI，填写地址（默认 `http://127.0.0.1:8080/gui/`）和账号密码
-
-打开程序后，进入 **设置** 页面：
-
-<img src="README.assets/软件设置_01.png" alt="软件设置_01"  />
-
-![软件设置_02](README.assets/软件设置_02.png)
-
-![软件设置_03](README.assets/软件设置_03.png)
-
-**浏览器配置**：
-
-1. 选择浏览器（推荐 Edge，系统自带无需额外安装）
-2. 点击 **检测浏览器** 验证驱动是否可用
-3. 首次使用会自动下载对应驱动（需联网）
-
-**登录金凤**：
-
-1. 点击 **网页登录**
-2. 在弹出的浏览器窗口中完成学校账号登录
-3. 登录成功后点击 **保存登录状态**
-4. 助手只保存站点 Cookie，不保存学校账号密码
-
-**Tracker 地址**：
-
-- 已预设默认值，无需修改
+1. 启动程序，首次运行会自动检测 uTorrent 路径
+2. 如未自动检测到，进入 **设置** 页面，点击 **自动查找** 或手动浏览选择 `uTorrent.exe`
+3. 在 **设置** → **站点登录** 中点击 **登录**，输入金凤站点用户名和密码
+4. 点击 **保存设置**
 
 ### 3. 使用方法
 
 1. 在 **一键做种** 页面选择文件或文件夹（支持拖放）
 2. 确认标题、简介等信息（自动填充，可手动修改）
-3. 点击 **开始上传**
-4. 等待完成，µTorrent 会自动打开种子做种
+3. 点击 **一键做种**
+4. 等待完成：制种 → HTTP 上传 → 下载站点种子 → uTorrent 自动开始做种
+
+## 项目结构
+
+```
+src/phoenix_helper/
+├── app.py                   # 入口
+├── config.py                # 配置管理（DPAPI 加密）
+├── models.py                # 数据模型
+├── phoenix/
+│   ├── client.py            # 站点 API（登录、上传、下载种子）
+│   ├── forms.py             # ASP.NET 表单解析
+│   ├── parser.py            # HTML 响应解析
+│   └── cookies.py           # Cookie 格式化
+├── torrent/
+│   ├── bencode.py           # Bencode 编解码
+│   ├── creator.py           # .torrent 文件生成
+│   └── inspector.py         # .torrent 文件解析
+├── clients/
+│   ├── discovery.py         # uTorrent 路径自动发现
+│   ├── utorrent.py          # uTorrent 命令行启动
+│   └── browser_cookies.py   # 浏览器 Cookie 读取（备用）
+└── ui/
+    ├── main_window.py       # 主窗口
+    ├── setup_dialog.py      # 首次配置向导
+    ├── http_login_dialog.py # 登录对话框
+    └── widgets.py           # 日志组件
+```
 
 ## 配置文件位置
 
@@ -72,18 +68,14 @@
 %APPDATA%\PhoenixHelper\config.json
 ```
 
-浏览器登录状态保存在：
-
-```text
-%APPDATA%\PhoenixHelper\selenium_profile\
-```
+密码和 Cookie 使用 Windows DPAPI 加密存储。
 
 ## 从源码运行
 
 ```bash
 # 创建虚拟环境
-python -m venv .venv
-source .venv/Scripts/activate  # Windows: .venv\Scripts\activate
+python -m venv .build-venv
+.build-venv\Scripts\activate
 
 # 安装依赖
 pip install -e .[dev]
@@ -94,23 +86,30 @@ python -m phoenix_helper.app
 
 ## 打包
 
-使用干净的 Python 环境打包（避免 Anaconda OpenSSL 问题）：
-
 ```bash
-# 自动创建 .build-venv 并打包
-python scripts/build_windows_clean.py
-
-# 或在已有的干净虚拟环境中直接打包
-python scripts/build_windows.py
+# 自动使用 .build-venv 打包为 onedir 模式
+python scripts/build_onedir.py
 ```
 
-打包选项：
+输出在 `dist/phoenix-helper-http/`。
 
-- `--onefile`：单文件 exe（默认）
-- `--onedir`：文件夹模式（启动更快）
-- `--windowed`：无控制台窗口（默认）
+## 技术演进
+
+1. **Selenium 方案**（已废弃）：使用 Edge/Chrome/Firefox 驱动自动化操作浏览器
+2. **Qt WebEngine 方案**（已废弃）：嵌入 Chromium 浏览器处理 ASP.NET 表单
+3. **HTTP 直连方案**（当前）：纯 `requests` 模拟表单提交，修复 Cookie 处理方式后成功绕过服务端验证
 
 ## 常见问题
+
+### uTorrent 未自动检测到
+
+点击 **设置** → **自动查找**。程序会搜索所有盘符的 `Program Files` 目录和根目录。如仍未找到，手动浏览选择 `uTorrent.exe`。
+
+### 上传失败
+
+- 检查 **设置** → **站点登录** 中的登录状态
+- 检查每日上传次数是否已用完
+- 查看日志输出框中的详细错误信息
 
 ### 启动时提示"另一程序正在使用此文件"
 
@@ -118,28 +117,8 @@ Windows Defender 实时扫描导致。解决方案：
 
 1. 打开 **Windows 安全中心** → **病毒和威胁防护** → **管理设置**
 2. 在 **排除项** 中添加程序所在文件夹
-3. 或使用 `phoenix-helper-dir/` 文件夹版本（启动更快，不易触发）
-
-### 浏览器驱动检测失败
-
-- Edge：系统自带，通常无需额外安装
-- Chrome：需要安装 Chrome 浏览器
-- Firefox：需要安装 Firefox 浏览器
-
-首次检测时会自动下载对应驱动，需保持联网。如下载失败，可手动下载放入 `scripts/drivers/` 目录。
-
-### 上传次数显示为 0
-
-每日上传次数在上传成功后自动减一。显示为 0 时仍可尝试上传（数据可能不同步）。
-
-## 技术栈
-
-- Python 3.12 + PySide6
-- Selenium WebDriver（Edge / Chrome / Firefox）
-- PyInstaller 打包
 
 ## 注意事项
 
 - 不要提交 `config.json`、Cookie、密码等敏感信息
 - `.gitignore` 已覆盖常见本地文件，提交前请检查 `git status`
-- 学校统一认证可能有验证码或风控，推荐使用浏览器登录方式
