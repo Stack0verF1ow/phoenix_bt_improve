@@ -92,6 +92,13 @@ class _DeviceRegistry:
         with self._lock:
             self._devices.pop(ip, None)
 
+    def touch(self, ip: str) -> None:
+        """Refresh last_seen for a device (called on each authenticated request)."""
+        with self._lock:
+            d = self._devices.get(ip)
+            if d:
+                d.last_seen = time.monotonic()
+
     def list_devices(self) -> list[dict]:
         now = time.monotonic()
         with self._lock:
@@ -235,6 +242,7 @@ class LanRequestHandler(BaseHTTPRequestHandler):
         """Return True if authenticated. Sends 403 and returns False otherwise."""
         token = self.headers.get("X-Device-Token", "")
         if token == self.full_token or token == self.qr_token:
+            self._devices.touch(self._client_ip)
             return True
         self._send_error(403, "Invalid or missing X-Device-Token")
         return False
@@ -273,6 +281,8 @@ class LanRequestHandler(BaseHTTPRequestHandler):
                 self._handle_upload_status(parts[3])
             else:
                 self._send_error(404, "Not found")
+        elif path == "/api/ping":
+            self._handle_ping()
         else:
             self._send_error(404, "Not found")
 
@@ -294,6 +304,10 @@ class LanRequestHandler(BaseHTTPRequestHandler):
             self._send_error(404, "Not found")
 
     # ── endpoint implementations ───────────────────────────────
+
+    def _handle_ping(self) -> None:
+        """GET /api/ping — unauthenticated liveness probe for IP discovery."""
+        self._send_json(200, {"status": "ok"})
 
     def _handle_register(self) -> None:
         """POST /api/register — exchange QR token for full session."""
@@ -335,6 +349,8 @@ class LanRequestHandler(BaseHTTPRequestHandler):
             "phoenix_logged_in": bool(self.config.cookie_header),
             "files_available": len(self._serve_dirs or []),
             "max_upload_size": 10 * 1024 * 1024 * 1024,  # 10 GB hint
+            "device_type": "pc",
+            "can_auto_seed": True,
         })
 
     def _handle_prepare_upload(self) -> None:

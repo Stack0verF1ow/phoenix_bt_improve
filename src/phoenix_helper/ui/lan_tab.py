@@ -4,12 +4,10 @@ import http.client
 import json
 import logging
 import os
-import socket
 import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Any
 
 from PySide6.QtCore import QThread, Signal, QObject
 from PySide6.QtWidgets import (
@@ -28,9 +26,9 @@ from PySide6.QtWidgets import (
 )
 
 from phoenix_helper.config import AppConfig
-from phoenix_helper.lan.server import LanServer
-from phoenix_helper.lan.qr_generator import generate_qr_image, qr_image_to_bytes
 from phoenix_helper.lan.ip_utils import get_lan_ips
+from phoenix_helper.lan.qr_generator import generate_qr_image, qr_image_to_bytes
+from phoenix_helper.lan.server import LanServer
 from phoenix_helper.ui.qr_display_widget import QrDisplayWidget
 from phoenix_helper.ui.widgets import LogBox
 
@@ -125,6 +123,7 @@ class SeedWorker(QThread):
         self.log.emit(f"[{meta['original_name']}] 做种完成！")
         self.status_changed.emit(self.upload_id, "做种完成")
         self.finished_ok.emit(self.upload_id, result.detail_url)
+
 
 
 class LanTabSignals(QObject):

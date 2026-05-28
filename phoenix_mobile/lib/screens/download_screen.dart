@@ -76,6 +76,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
       );
 
       transfer.setDownloadState(TransferState.done);
+      transfer.markDownloaded(file.path);
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -197,19 +198,24 @@ class _DownloadScreenState extends State<DownloadScreen> {
                                   color: Colors.blue),
                               title: Text(file.name),
                               subtitle: Text(_formatSize(file.size)),
-                              trailing: IconButton(
-                                icon: isDownloading
-                                    ? const SizedBox(
-                                        width: 18,
-                                        height: 18,
-                                        child: CircularProgressIndicator(
-                                            strokeWidth: 2),
-                                      )
-                                    : const Icon(Icons.download),
-                                onPressed: (busy || _downloadingFilePath != null)
-                                    ? null
-                                    : () => _downloadFile(file),
-                              ),
+                              trailing: transfer.downloadedFiles.contains(file.path)
+                                  ? const Icon(Icons.check_circle,
+                                      color: Colors.green)
+                                  : IconButton(
+                                      icon: isDownloading
+                                          ? const SizedBox(
+                                              width: 18,
+                                              height: 18,
+                                              child:
+                                                  CircularProgressIndicator(
+                                                      strokeWidth: 2),
+                                            )
+                                          : const Icon(Icons.download),
+                                      onPressed: (busy ||
+                                              _downloadingFilePath != null)
+                                          ? null
+                                          : () => _downloadFile(file),
+                                    ),
                             );
                           },
                         ),
