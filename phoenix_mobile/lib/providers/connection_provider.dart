@@ -14,7 +14,7 @@ class ConnectionProvider extends ChangeNotifier {
   bool _serverLost = false;
   bool _transferring = false;
   int _consecutiveFailures = 0;
-  static const _maxFailures = 3;
+  static const _maxFailures = 2;
   Timer? _heartbeat;
 
   HttpClient? get client => _client;
@@ -41,7 +41,9 @@ class ConnectionProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final client = HttpClient(info);
+      // Probe multiple IPs from QR code to find the reachable one
+      final probed = await info.withProbedHost();
+      final client = HttpClient(probed);
       await client.register(localName: localName);
       _client = client;
       _status = await client.getStatus();
@@ -72,7 +74,7 @@ class ConnectionProvider extends ChangeNotifier {
 
   void _startHeartbeat() {
     _heartbeat?.cancel();
-    _heartbeat = Timer.periodic(const Duration(seconds: 2), (_) async {
+    _heartbeat = Timer.periodic(const Duration(seconds: 1), (_) async {
       if (_client == null || _transferring) return;
       try {
         await _client!.getStatus();
