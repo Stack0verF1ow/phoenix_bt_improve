@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -18,9 +19,11 @@ class _UploadScreenState extends State<UploadScreen> {
   List<_SelectedFile> _selectedFiles = [];
   bool _autoSeed = false;
   final _titleController = TextEditingController();
+  Timer? _errorTimer;
 
   @override
   void dispose() {
+    _errorTimer?.cancel();
     _titleController.dispose();
     super.dispose();
   }
@@ -49,6 +52,7 @@ class _UploadScreenState extends State<UploadScreen> {
     if (client == null) return;
 
     final transfer = context.read<TransferProvider>();
+    conn.setTransferring(true);
     transfer.setState(TransferState.preparing);
 
     try {
@@ -80,11 +84,17 @@ class _UploadScreenState extends State<UploadScreen> {
 
         transfer.setStatus('正在上传: ${f.name}');
         final bytes = await _readBytes(f);
+        final fileSentBefore = sentBytes;
         await client.uploadFile(
           sessionId: session.sessionId,
           fileId: fid,
           token: token,
           bytes: bytes,
+          onProgress: (sent, total) {
+            final current = fileSentBefore + sent;
+            transfer.setProgress((current / totalBytes).clamp(0.0, 1.0));
+            transfer.updateUploadSpeed(current, totalBytes);
+          },
         );
         sentBytes += bytes.length;
         transfer.setProgress((sentBytes / totalBytes).clamp(0.0, 1.0));
@@ -108,10 +118,16 @@ class _UploadScreenState extends State<UploadScreen> {
       Navigator.of(context).pop();
     } catch (e) {
       transfer.setError(e.toString());
+      _errorTimer?.cancel();
+      _errorTimer = Timer(const Duration(seconds: 5), () {
+        if (mounted) transfer.clearUploadError();
+      });
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('上传失败: $e'), backgroundColor: Colors.red),
       );
+    } finally {
+      conn.setTransferring(false);
     }
   }
 
@@ -183,14 +199,33 @@ class _UploadScreenState extends State<UploadScreen> {
             if (busy || transfer.state == TransferState.done) ...[
               LinearProgressIndicator(value: transfer.progress),
               const SizedBox(height: 8),
-              Text(transfer.statusText,
-                  style: TextStyle(color: Colors.grey[600])),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(transfer.statusText,
+                        style: TextStyle(color: Colors.grey[600])),
+                  ),
+                  if (transfer.speedText.isNotEmpty)
+                    Text(transfer.speedText,
+                        style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+                ],
+              ),
             ],
             if (transfer.state == TransferState.error)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
-                child: Text(transfer.error ?? '未知错误',
-                    style: const TextStyle(color: Colors.red)),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(transfer.error ?? '未知错误',
+                          style: const TextStyle(color: Colors.red)),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 18),
+                      onPressed: () => transfer.clearUploadError(),
+                    ),
+                  ],
+                ),
               ),
             const Spacer(),
             SizedBox(

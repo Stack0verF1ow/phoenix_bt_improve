@@ -9,6 +9,7 @@ import 'screens/home_screen.dart';
 import 'screens/receive_screen.dart';
 import 'screens/scan_screen.dart';
 import 'screens/settings_screen.dart';
+import 'services/settings_service.dart';
 
 final _router = GoRouter(
   initialLocation: '/',
@@ -22,12 +23,14 @@ final _router = GoRouter(
 );
 
 class PhoenixHelperApp extends StatelessWidget {
-  const PhoenixHelperApp({super.key});
+  final SettingsService settings;
+  const PhoenixHelperApp({super.key, required this.settings});
 
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
+        Provider.value(value: settings),
         ChangeNotifierProvider(create: (_) => ConnectionProvider()),
         ChangeNotifierProvider(create: (_) => TransferProvider()),
       ],

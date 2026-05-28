@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import 'downloaded_files_screen.dart';
+
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
@@ -46,6 +48,16 @@ class HomeScreen extends StatelessWidget {
               subtitle: '设备名称、端口等配置',
               color: Colors.grey[600]!,
               onTap: () => context.push('/settings'),
+            ),
+            const SizedBox(height: 16),
+            _ActionCard(
+              icon: Icons.folder_open,
+              title: '已下载列表',
+              subtitle: '查看、打开、管理已下载的文件',
+              color: Colors.orange,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const DownloadedFilesScreen()),
+              ),
             ),
           ],
         ),

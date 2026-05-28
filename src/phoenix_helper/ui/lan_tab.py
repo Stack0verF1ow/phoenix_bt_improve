@@ -3,7 +3,9 @@ from __future__ import annotations
 import http.client
 import json
 import logging
+import os
 import socket
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -11,9 +13,12 @@ from typing import Any
 
 from PySide6.QtCore import QThread, Signal, QObject
 from PySide6.QtWidgets import (
+    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QSpinBox,
     QTableWidget,
@@ -127,6 +132,9 @@ class LanTabSignals(QObject):
     file_received = Signal(str, str)
     device_connected = Signal(str, str)  # ip, name
     devices_updated = Signal(list)  # list of device dicts
+    upload_progress = Signal(str, int, int, int, int)  # name, received, total, files_done, files_total
+    file_downloaded = Signal(str, int, str)  # filename, size, ip
+    download_progress = Signal(str, int, int, str)  # filename, sent, total, ip
 
 
 class LanTab(QWidget):
@@ -144,11 +152,17 @@ class LanTab(QWidget):
         self.server.on_seed_ready = self._on_seed_requested
         self.server.on_file_received = self._on_file_received
         self.server.on_device_connected = self._on_device_connected
+        self.server.on_upload_progress = self._on_upload_progress
+        self.server.on_file_downloaded = self._on_file_downloaded
+        self.server.on_download_progress = self._on_download_progress
 
         self.signals.log.connect(self._append_log)
         self.signals.file_received.connect(self._on_file_received_ui)
         self.signals.device_connected.connect(self._add_device_row)
         self.signals.devices_updated.connect(self._update_device_table)
+        self.signals.upload_progress.connect(self._on_upload_progress_ui)
+        self.signals.file_downloaded.connect(self._on_file_downloaded_ui)
+        self.signals.download_progress.connect(self._on_download_progress_ui)
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -174,6 +188,27 @@ class LanTab(QWidget):
         ctrl_layout.addWidget(self.start_btn)
         layout.addLayout(ctrl_layout)
 
+        # Shared files section
+        share_group = QGroupBox("共享文件（手机端可下载）")
+        share_layout = QVBoxLayout(share_group)
+
+        share_btn_layout = QHBoxLayout()
+        self.pick_files_btn = QPushButton("选择文件...")
+        self.pick_files_btn.clicked.connect(self._pick_files)
+        self.clear_files_btn = QPushButton("清空")
+        self.clear_files_btn.clicked.connect(self._clear_shared_files)
+        self.file_count_label = QLabel("未选择任何文件")
+        share_btn_layout.addWidget(self.pick_files_btn)
+        share_btn_layout.addWidget(self.clear_files_btn)
+        share_btn_layout.addStretch(1)
+        share_btn_layout.addWidget(self.file_count_label)
+        share_layout.addLayout(share_btn_layout)
+
+        self.shared_files_list = QListWidget()
+        self.shared_files_list.setMaximumHeight(140)
+        share_layout.addWidget(self.shared_files_list)
+        layout.addWidget(share_group)
+
         # Connected devices section
         device_group = QGroupBox("已连接设备")
         device_layout = QVBoxLayout(device_group)
@@ -195,6 +230,30 @@ class LanTab(QWidget):
         layout.addWidget(log_group)
 
         layout.addStretch(1)
+
+    def _pick_files(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(self, "选择要共享的文件")
+        if not paths:
+            return
+        from pathlib import Path
+        self.server.add_shared_files([Path(p) for p in paths])
+        self._refresh_shared_files_list()
+        self._append_log(f"已添加 {len(paths)} 个文件到共享列表")
+
+    def _clear_shared_files(self) -> None:
+        count = len(self.server.shared_files)
+        self.server.clear_shared_files()
+        self._refresh_shared_files_list()
+        if count:
+            self._append_log(f"已清空共享列表（{count} 个文件）")
+
+    def _refresh_shared_files_list(self) -> None:
+        self.shared_files_list.clear()
+        for fp in self.server.shared_files:
+            size_str = self._format_size(fp.stat().st_size) if fp.exists() else "?"
+            self.shared_files_list.addItem(QListWidgetItem(f"{fp.name}  ({size_str})"))
+        count = len(self.server.shared_files)
+        self.file_count_label.setText(f"已选 {count} 个文件" if count else "未选择任何文件")
 
     def _toggle_server(self) -> None:
         if self.server.is_running:
@@ -247,18 +306,60 @@ class LanTab(QWidget):
 
     def _update_device_table(self, devices: list[dict]) -> None:
         self.device_table.setRowCount(len(devices))
+        names = []
         for i, d in enumerate(devices):
-            self.device_table.setItem(i, 0, QTableWidgetItem(d.get("name", "")))
+            name = d.get("name", "")
+            names.append(name)
+            self.device_table.setItem(i, 0, QTableWidgetItem(name))
             self.device_table.setItem(i, 1, QTableWidgetItem(d.get("ip", "")))
-            t = time.strftime("%H:%M:%S", time.localtime(time.time()))
+            ts = d.get("connected_at", 0)
+            if ts:
+                t = time.strftime("%H:%M:%S", time.localtime(ts))
+            else:
+                t = time.strftime("%H:%M:%S", time.localtime(time.time()))
             self.device_table.setItem(i, 2, QTableWidgetItem(t))
+        self.qr_widget.set_peer_count(len(devices), names)
 
     def _on_device_connected(self, ip: str, name: str) -> None:
         """Called from server thread when a device registers."""
         self.signals.device_connected.emit(ip, name)
 
+    def _on_upload_progress(self, filename: str, received: int, total: int,
+                            files_done: int, files_total: int) -> None:
+        """Called from server thread during chunked read."""
+        self.signals.upload_progress.emit(filename, received, total, files_done, files_total)
+
+    def _on_upload_progress_ui(self, filename: str, received: int, total: int,
+                                files_done: int, files_total: int) -> None:
+        pct = int(received * 100 / total) if total > 0 else 0
+        recv_str = self._format_size(received)
+        total_str = self._format_size(total)
+        self.transfer_log.update_progress(
+            f"接收中：{filename} {recv_str}/{total_str} ({pct}%) [{files_done}/{files_total}]"
+        )
+
     def _add_device_row(self, ip: str, name: str) -> None:
         self._append_log(f"设备已连接：{name or ip}")
+
+    def _on_file_downloaded(self, filename: str, size: int, ip: str) -> None:
+        """Called from server thread when a file is downloaded."""
+        self.signals.file_downloaded.emit(filename, size, ip)
+
+    def _on_file_downloaded_ui(self, filename: str, size: int, ip: str) -> None:
+        size_str = self._format_size(size)
+        self._append_log(f"设备 {ip} 下载了：{filename}（{size_str}）")
+
+    def _on_download_progress(self, filename: str, sent: int, total: int, ip: str) -> None:
+        """Called from server thread during download."""
+        self.signals.download_progress.emit(filename, sent, total, ip)
+
+    def _on_download_progress_ui(self, filename: str, sent: int, total: int, ip: str) -> None:
+        pct = int(sent * 100 / total) if total > 0 else 0
+        sent_str = self._format_size(sent)
+        total_str = self._format_size(total)
+        self.transfer_log.update_progress(
+            f"发送中：{filename} {sent_str}/{total_str} ({pct}%) → {ip}"
+        )
 
     def _on_seed_requested(self, upload_id: str, title: str, category: str,
                            description: str, tags: list[str]) -> None:
@@ -287,6 +388,16 @@ class LanTab(QWidget):
         if meta:
             size_str = self._format_size(meta["size"])
             self._append_log(f"  大小：{size_str}，如需自动做种请在手机端确认")
+            file_path = meta.get("file_path", "")
+            if file_path:
+                folder = os.path.dirname(file_path)
+                try:
+                    if os.name == "nt":
+                        os.startfile(folder)
+                    else:
+                        subprocess.Popen(["xdg-open", folder])
+                except Exception as exc:
+                    LOGGER.warning("Failed to open folder %s: %s", folder, exc)
 
     def _append_log(self, message: str) -> None:
         self.transfer_log.append_line(message)
