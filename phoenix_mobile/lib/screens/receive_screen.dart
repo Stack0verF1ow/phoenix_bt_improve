@@ -1,9 +1,11 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../config/app_config.dart';
+import '../services/settings_service.dart';
 
 class ReceiveScreen extends StatefulWidget {
   const ReceiveScreen({super.key});
@@ -13,8 +15,16 @@ class ReceiveScreen extends StatefulWidget {
 }
 
 class _ReceiveScreenState extends State<ReceiveScreen> {
-  final String _deviceName = Platform.localHostname;
-  final int _listenPort = AppConfig.defaultPort;
+  late final String _deviceName;
+  late final int _listenPort;
+
+  @override
+  void initState() {
+    super.initState();
+    final settings = context.read<SettingsService>();
+    _deviceName = settings.deviceName;
+    _listenPort = settings.port;
+  }
   HttpServer? _server;
   bool _running = false;
   String _qrContent = '';

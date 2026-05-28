@@ -460,8 +460,23 @@ class MainWindow(QMainWindow):
         ut_form.addRow("可执行文件", ut_actions)
         layout.addWidget(ut_group)
 
+        # --- Receive directory section ---
+        recv_group = QGroupBox("文件接收")
+        recv_form = QFormLayout(recv_group)
+        self.receive_dir_input = QLineEdit(str(self.config.upload_receive_dir))
+        recv_actions = QHBoxLayout()
+        browse_recv_button = QPushButton("浏览")
+        browse_recv_button.clicked.connect(self.browse_receive_dir)
+        open_recv_button = QPushButton("打开文件夹")
+        open_recv_button.clicked.connect(self.open_receive_dir)
+        recv_actions.addWidget(self.receive_dir_input, 1)
+        recv_actions.addWidget(browse_recv_button)
+        recv_actions.addWidget(open_recv_button)
+        recv_form.addRow("保存目录", recv_actions)
+        layout.addWidget(recv_group)
+
         # Auto-save on field edit
-        for line_edit in (self.tracker_input, self.utorrent_exe_input):
+        for line_edit in (self.tracker_input, self.utorrent_exe_input, self.receive_dir_input):
             line_edit.editingFinished.connect(lambda le=line_edit: self.save_settings(silent=True))
 
         layout.addStretch(1)
@@ -710,6 +725,18 @@ class MainWindow(QMainWindow):
             self.utorrent_exe_input.setText(path)
             self.save_settings(silent=True)
 
+    def browse_receive_dir(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "选择文件接收目录")
+        if path:
+            self.receive_dir_input.setText(path)
+            self.save_settings(silent=True)
+
+    def open_receive_dir(self) -> None:
+        import os
+        d = self.config.upload_receive_dir
+        d.mkdir(parents=True, exist_ok=True)
+        os.startfile(str(d))
+
     def fill_utorrent_path(self) -> None:
         path = find_utorrent_executable()
         if path is None:
@@ -753,6 +780,13 @@ class MainWindow(QMainWindow):
     def _sync_config_from_inputs(self) -> None:
         self.config.tracker_url = self.tracker_input.text().strip()
         self.config.utorrent_executable = self.utorrent_exe_input.text().strip()
+        recv_dir = self.receive_dir_input.text().strip()
+        if recv_dir:
+            new_dir = Path(recv_dir)
+            if new_dir != self.config.upload_receive_dir:
+                self.config.upload_receive_dir = new_dir
+                self.lan_tab.server.file_store.base_dir = new_dir
+                new_dir.mkdir(parents=True, exist_ok=True)
 
     def choose_folder(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "选择要分享的文件夹")

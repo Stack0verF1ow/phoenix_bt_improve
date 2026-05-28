@@ -37,7 +37,7 @@ LOGGER = logging.getLogger(__name__)
 # ── rate limiter ──────────────────────────────────────────────────
 
 _RATE_LIMIT_WINDOW = 60.0  # seconds
-_RATE_LIMIT_MAX = 30        # requests per window per IP
+_RATE_LIMIT_MAX = 60        # requests per window per IP
 
 
 class _RateLimiter:
@@ -68,7 +68,7 @@ class _ConnectedDevice:
     def __init__(self, ip: str, name: str = "") -> None:
         self.ip = ip
         self.name = name
-        self.connected_at = time.monotonic()
+        self.connected_at = time.time()
         self.last_seen = time.monotonic()
 
 
@@ -178,6 +178,8 @@ class LanRequestHandler(BaseHTTPRequestHandler):
     qr_token: str = ""          # the 6-char prefix from QR code
     full_token: str = ""        # the full SHA256 token
     on_seed_ready: Callable | None = None
+    on_file_downloaded: Callable | None = None
+    on_download_progress: Callable | None = None
     server_ref: "LanServer | None" = None
     _limiter: _RateLimiter = _RateLimiter()
     _sessions: _SessionManager = _SessionManager()
@@ -208,6 +210,26 @@ class LanRequestHandler(BaseHTTPRequestHandler):
     def _read_body(self) -> bytes:
         length = int(self.headers.get("Content-Length", 0))
         return self.rfile.read(length)
+
+    def _read_body_chunked(self, chunk_size: int = 65536,
+                           on_chunk: Callable[[int, int], None] | None = None) -> bytes:
+        """Read body in chunks, calling on_chunk(received_so_far, total) after each."""
+        length = int(self.headers.get("Content-Length", 0))
+        if length <= 0:
+            return b""
+        if on_chunk is None:
+            return self.rfile.read(length)
+        buf = bytearray()
+        received = 0
+        while received < length:
+            to_read = min(chunk_size, length - received)
+            chunk = self.rfile.read(to_read)
+            if not chunk:
+                break
+            buf.extend(chunk)
+            received += len(chunk)
+            on_chunk(received, length)
+        return bytes(buf)
 
     def _check_auth(self) -> bool:
         """Return True if authenticated. Sends 403 and returns False otherwise."""
@@ -266,6 +288,8 @@ class LanRequestHandler(BaseHTTPRequestHandler):
             self._handle_confirm_seed()
         elif path == "/api/cancel":
             self._handle_cancel()
+        elif path == "/api/disconnect":
+            self._handle_disconnect()
         else:
             self._send_error(404, "Not found")
 
@@ -393,7 +417,26 @@ class LanRequestHandler(BaseHTTPRequestHandler):
             self._send_error(403, "Invalid file token")
             return
 
-        file_data = self._read_body()
+        content_length = int(self.headers.get("Content-Length", 0))
+        if content_length <= 0:
+            self._send_error(411, "Missing or zero Content-Length")
+            return
+
+        def _on_chunk(received: int, total: int) -> None:
+            if self.server_ref and self.server_ref.on_upload_progress:
+                self.server_ref.on_upload_progress(
+                    finfo["name"], received, total,
+                    len(session.received), len(session.file_ids)
+                )
+
+        try:
+            file_data = self._read_body_chunked(on_chunk=_on_chunk)
+        except (ConnectionError, OSError) as exc:
+            LOGGER.warning("Upload body read failed for session %s file '%s': %s",
+                           sid, fid, exc)
+            self._send_error(400, "Connection lost during upload")
+            return
+
         session.received[fid] = file_data
         LOGGER.info("Session %s received file '%s' (%d bytes)",
                     sid, finfo["name"], len(file_data))
@@ -515,35 +558,41 @@ class LanRequestHandler(BaseHTTPRequestHandler):
         LOGGER.info("Session %s cancelled by peer", sid)
         self._send_json(200, {"status": "cancelled"})
 
+    def _handle_disconnect(self) -> None:
+        """POST /api/disconnect — client requests graceful disconnect."""
+        # No rate limit or auth check — always allow graceful disconnect
+        ip = self._client_ip
+        self._devices.unregister(ip)
+        LOGGER.info("Device %s disconnected gracefully", ip)
+        self._send_json(200, {"status": "disconnected"})
+
     def _handle_list_devices(self) -> None:
         """GET /api/devices — list currently connected devices."""
         self._send_json(200, {"devices": self._devices.list_devices(),
                               "count": len(self._devices._devices)})
 
     def _handle_list_files(self) -> None:
-        """GET /api/files — list files in served directories."""
+        """GET /api/files — list files shared by the PC user."""
         if not self._check_auth_and_rate():
             return
+
+        shared = getattr(self.server_ref, 'shared_files', [])
         entries: list[dict] = []
-        dirs = self._serve_dirs or _DEFAULT_SERVE_DIRS()
-        for sd in dirs:
-            if not sd.exists():
+        for fp in shared:
+            if not fp.exists() or not fp.is_file():
                 continue
-            for entry in sorted(sd.iterdir())[:300]:
-                if entry.name.startswith("."):
-                    continue
-                try:
-                    st = entry.stat()
-                except OSError:
-                    continue
-                entries.append({
-                    "path": str(entry),
-                    "name": entry.name,
-                    "type": "dir" if entry.is_dir() else "file",
-                    "size": st.st_size if entry.is_file() else 0,
-                    "mtime": st.st_mtime,
-                })
-        entries.sort(key=lambda e: (e["type"] != "dir", e["name"].lower()))
+            try:
+                st = fp.stat()
+            except OSError:
+                continue
+            entries.append({
+                "path": str(fp),
+                "name": fp.name,
+                "type": "file",
+                "size": st.st_size,
+                "mtime": st.st_mtime,
+            })
+        entries.sort(key=lambda e: e["name"].lower())
         self._send_json(200, {"entries": entries})
 
     def _handle_download(self) -> None:
@@ -558,6 +607,10 @@ class LanRequestHandler(BaseHTTPRequestHandler):
             return
 
         file_path = Path(file_path_str)
+        shared = getattr(self.server_ref, 'shared_files', [])
+        if file_path not in shared:
+            self._send_error(403, "File not shared by PC")
+            return
         if not file_path.exists() or not file_path.is_file():
             self._send_error(404, "File not found")
             return
@@ -570,11 +623,13 @@ class LanRequestHandler(BaseHTTPRequestHandler):
 
         self.send_response(200)
         self.send_header("Content-Type", "application/octet-stream")
+        safe_name = file_path.name.encode("ascii", "replace").decode("ascii")
         self.send_header("Content-Disposition",
-                         f'attachment; filename="{file_path.name}"')
+                         f'attachment; filename="{safe_name}"')
         self.send_header("Content-Length", str(file_size))
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
+        sent = 0
         with open(file_path, "rb") as f:
             while True:
                 chunk = f.read(65536)
@@ -582,8 +637,16 @@ class LanRequestHandler(BaseHTTPRequestHandler):
                     break
                 try:
                     self.wfile.write(chunk)
+                    sent += len(chunk)
+                    if self.on_download_progress:
+                        self.on_download_progress(file_path.name, sent, file_size, self._client_ip)
                 except (ConnectionError, BrokenPipeError):
                     break
+        if self.on_file_downloaded:
+            try:
+                self.on_file_downloaded(file_path.name, file_size, self._client_ip)
+            except Exception:
+                LOGGER.exception("Error in on_file_downloaded callback")
 
     @property
     def clean_path(self) -> str:
@@ -612,7 +675,11 @@ class LanServer:
         self.on_seed_ready: Callable | None = None
         self.on_file_received: Callable | None = None
         self.on_device_connected: Callable | None = None
+        self.on_upload_progress: Callable | None = None
+        self.on_file_downloaded: Callable | None = None
+        self.on_download_progress: Callable | None = None
         self.serve_dirs: list[Path] | None = None
+        self.shared_files: list[Path] = []
         self._full_token: str = ""
 
     @property
@@ -639,6 +706,8 @@ class LanServer:
         LanRequestHandler.qr_token = self.qr_token
         LanRequestHandler.full_token = self._full_token
         LanRequestHandler.on_seed_ready = self.on_seed_ready
+        LanRequestHandler.on_file_downloaded = self.on_file_downloaded
+        LanRequestHandler.on_download_progress = self.on_download_progress
         LanRequestHandler.server_ref = self
         LanRequestHandler._serve_dirs = self.serve_dirs
 
@@ -650,12 +719,28 @@ class LanServer:
         LOGGER.info("QR token: %s", self.qr_token)
         return actual_port
 
+    def add_shared_files(self, paths: list[Path]) -> None:
+        """Add files to the shared file list (deduplicated)."""
+        existing = set(self.shared_files)
+        for p in paths:
+            if p not in existing and p.is_file():
+                self.shared_files.append(p)
+                existing.add(p)
+
+    def remove_shared_file(self, path: Path) -> None:
+        """Remove a file from the shared list."""
+        self.shared_files = [f for f in self.shared_files if f != path]
+
+    def clear_shared_files(self) -> None:
+        self.shared_files.clear()
+
     def stop(self) -> None:
         if self._server:
             self._server.shutdown()
             self._server = None
             self._thread = None
             self._full_token = ""
+            self.shared_files.clear()
             LOGGER.info("LAN server stopped")
 
     @property

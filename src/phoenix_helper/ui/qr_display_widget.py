@@ -61,3 +61,12 @@ class QrDisplayWidget(QWidget):
         self.port_label.setText(f"监听端口：{port}")
         self.status_label.setText("状态：运行中")
         self.status_label.setStyleSheet("color: #4CAF50; font-weight: bold;")
+
+    def set_peer_count(self, count: int, names: list[str] | None = None) -> None:
+        if count == 0:
+            self.peer_label.setText("已连接设备：无")
+            self.peer_label.setStyleSheet("color: #666;")
+        else:
+            label = "、".join(names) if names else str(count)
+            self.peer_label.setText(f"已连接设备：{label}")
+            self.peer_label.setStyleSheet("color: #4CAF50; font-weight: bold;")

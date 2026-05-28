@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/connection_provider.dart';
 import '../services/qr_service.dart';
+import '../services/settings_service.dart';
 
 class ScanScreen extends StatefulWidget {
   const ScanScreen({super.key});
@@ -39,7 +40,8 @@ class _ScanScreenState extends State<ScanScreen> {
 
     _processing = true;
     final provider = context.read<ConnectionProvider>();
-    final ok = await provider.connect(device);
+    final localName = context.read<SettingsService>().deviceName;
+    final ok = await provider.connect(device, localName: localName);
 
     if (!mounted) return;
 
@@ -53,8 +55,16 @@ class _ScanScreenState extends State<ScanScreen> {
 
   void _showError(String msg) {
     if (!mounted) return;
+    // Provide helpful hint for connection timeout
+    final display = msg.contains('timeout') || msg.contains('Timeout')
+        ? '$msg\n\n提示：如果是手机热点模式，请关闭移动数据后重试'
+        : msg;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: Colors.red),
+      SnackBar(
+        content: Text(display),
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 6),
+      ),
     );
   }
 
