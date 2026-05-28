@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 
 import '../models/device_info.dart';
@@ -33,10 +35,10 @@ class HttpClient {
     _dio.options.headers['X-Device-Token'] = token;
   }
 
-  Future<void> register() async {
+  Future<void> register({String localName = ''}) async {
     final resp = await _dio.post(
       '/api/register',
-      data: {'token': _device.tokenPrefix, 'device_name': _device.name},
+      data: {'token': _device.tokenPrefix, 'device_name': localName},
       options: Options(contentType: Headers.jsonContentType),
     );
     if (resp.statusCode! != 200) {
@@ -76,6 +78,7 @@ class HttpClient {
     required String fileId,
     required String token,
     required List<int> bytes,
+    void Function(int sent, int total)? onProgress,
   }) async {
     final resp = await _dio.post(
       '/api/upload',
@@ -84,12 +87,13 @@ class HttpClient {
         'fileId': fileId,
         'token': token,
       },
-      data: Stream.fromIterable([bytes]),
+      data: Uint8List.fromList(bytes),
       options: Options(
         contentType: 'application/octet-stream',
         receiveTimeout: const Duration(minutes: 5),
         sendTimeout: const Duration(minutes: 5),
       ),
+      onSendProgress: onProgress,
     );
     if (resp.statusCode! != 200) {
       throw ApiException(resp.statusCode!, 'Upload failed');
@@ -122,8 +126,11 @@ class HttpClient {
     return UploadConfirmResult.fromJson(resp.data as Map<String, dynamic>);
   }
 
-  Future<List<FileEntry>> listFiles() async {
-    final resp = await _dio.get('/api/files');
+  Future<List<FileEntry>> listFiles({String? path}) async {
+    final resp = await _dio.get(
+      '/api/files',
+      queryParameters: path != null ? {'path': path} : null,
+    );
     if (resp.statusCode! != 200) {
       throw ApiException(resp.statusCode!, 'List files failed');
     }
@@ -134,7 +141,11 @@ class HttpClient {
         .toList();
   }
 
-  Future<String> downloadFile(String path, String saveDir) async {
+  Future<String> downloadFile(
+    String path,
+    String saveDir, {
+    void Function(int received, int total)? onProgress,
+  }) async {
     final parts = path.split('/');
     final name = parts.isNotEmpty ? parts.last : 'download';
     final savePath = '$saveDir/$name';
@@ -145,8 +156,17 @@ class HttpClient {
       options: Options(
         receiveTimeout: const Duration(minutes: 10),
       ),
+      onReceiveProgress: onProgress,
     );
     return savePath;
+  }
+
+  Future<void> disconnect() async {
+    try {
+      await _dio.post('/api/disconnect');
+    } catch (_) {
+      // Ignore errors — server may already be gone
+    }
   }
 
   void dispose() {

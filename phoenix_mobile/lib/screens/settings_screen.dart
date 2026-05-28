@@ -1,6 +1,8 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+
+import '../services/settings_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -16,8 +18,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: Platform.localHostname);
-    _portController = TextEditingController(text: '18080');
+    final settings = context.read<SettingsService>();
+    _nameController = TextEditingController(text: settings.deviceName);
+    _portController = TextEditingController(text: settings.port.toString());
   }
 
   @override
@@ -27,7 +30,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.dispose();
   }
 
-  void _saveSettings() {
+  Future<void> _saveSettings() async {
+    final settings = context.read<SettingsService>();
+    final name = _nameController.text.trim();
+    final port = int.tryParse(_portController.text);
+
+    if (name.isNotEmpty) {
+      await settings.saveDeviceName(name);
+    }
+    if (port != null && port >= 1024 && port <= 65535) {
+      await settings.savePort(port);
+    }
+
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('设置已保存')),
     );
@@ -36,6 +51,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final settings = context.read<SettingsService>();
+
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
       body: ListView(
@@ -58,6 +75,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
               helperText: '用于接收文件的端口号 (1024-65535)',
             ),
             keyboardType: TextInputType.number,
+          ),
+          const SizedBox(height: 24),
+          Row(
+            children: [
+              Expanded(
+                child: InputDecorator(
+                  decoration: const InputDecoration(
+                    labelText: '下载保存位置',
+                    border: OutlineInputBorder(),
+                    helperText: '文件下载后保存在此目录',
+                  ),
+                  child: Text(
+                    settings.downloadDir,
+                    style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                icon: const Icon(Icons.copy),
+                tooltip: '复制路径',
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: settings.downloadDir));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('路径已复制')),
+                  );
+                },
+              ),
+            ],
           ),
           const SizedBox(height: 32),
           SizedBox(

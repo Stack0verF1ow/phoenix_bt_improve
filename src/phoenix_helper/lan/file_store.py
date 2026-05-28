@@ -15,12 +15,20 @@ class FileStore:
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
     def create_upload(self, original_name: str, file_data: bytes) -> str:
-        """Save an uploaded file and return its upload ID."""
+        """Save an uploaded file directly in base_dir and return its upload ID."""
         upload_id = str(uuid.uuid4())
-        upload_dir = self.base_dir / upload_id
-        upload_dir.mkdir(parents=True, exist_ok=True)
+        self.base_dir.mkdir(parents=True, exist_ok=True)
 
-        file_path = upload_dir / original_name
+        # Avoid overwriting: append suffix if file exists
+        file_path = self.base_dir / original_name
+        if file_path.exists():
+            stem = file_path.stem
+            suffix = file_path.suffix
+            counter = 1
+            while file_path.exists():
+                file_path = self.base_dir / f"{stem}_{counter}{suffix}"
+                counter += 1
+
         file_path.write_bytes(file_data)
 
         meta = {
@@ -62,21 +70,32 @@ class FileStore:
 
     def list_all(self) -> list[dict[str, Any]]:
         entries = []
-        for subdir in sorted(self.base_dir.iterdir()):
-            if subdir.is_dir():
-                meta = self.get_meta(subdir.name)
-                if meta:
+        meta_dir = self.base_dir / ".meta"
+        if not meta_dir.exists():
+            return entries
+        for meta_file in sorted(meta_dir.iterdir()):
+            if meta_file.suffix == ".json":
+                try:
+                    meta = json.loads(meta_file.read_text(encoding="utf-8"))
                     entries.append(meta)
+                except Exception:
+                    continue
         return entries
 
     def remove(self, upload_id: str) -> None:
-        import shutil
-        upload_dir = self.base_dir / upload_id
-        if upload_dir.exists():
-            shutil.rmtree(upload_dir)
+        meta = self.get_meta(upload_id)
+        if meta:
+            file_path = Path(meta.get("file_path", ""))
+            if file_path.exists() and file_path.is_file():
+                file_path.unlink()
+        meta_path = self._meta_path(upload_id)
+        if meta_path.exists():
+            meta_path.unlink()
 
     def _meta_path(self, upload_id: str) -> Path:
-        return self.base_dir / upload_id / "meta.json"
+        meta_dir = self.base_dir / ".meta"
+        meta_dir.mkdir(parents=True, exist_ok=True)
+        return meta_dir / f"{upload_id}.json"
 
     def _write_meta(self, upload_id: str, meta: dict) -> None:
         meta_path = self._meta_path(upload_id)

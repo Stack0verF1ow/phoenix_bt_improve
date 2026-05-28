@@ -16,7 +16,6 @@ d:\phoenix-helper/
 │   ├── clients/              # uTorrent 等外部客户端交互
 │   ├── torrent/              # 制种、种子解析
 │   ├── phoenix/              # 金凤站点 API 客户端
-│   └── webengine/            # 旧版 WebEngine 登录/上传（已弃用）
 ├── phoenix_mobile/           # Flutter 移动端项目
 └── pyproject.toml
 ```
@@ -92,7 +91,6 @@ HTTP 直传方案（无 WebEngine），三步上传协议：
 2. **`pyproject.toml` 去掉 `PySide6-WebEngine`**: 该独立包已不存在于 PyPI，QtWebEngine 已内置在 PySide6-Addons 中
 3. **OpenSSL 兼容性**: 如果在新机器上遇到同样崩溃，可考虑用 `http.client` 替代所有 `urlopen` 调用，或更换 Python 发行版
 4. **CJK 路径**: 用户名 `吴名` 导致 Flutter impellerc / Gradle worker daemon 在 CJK 路径下失败，已在 `build_apk.sh` 中用 robocopy 到 ASCII 路径绕过
-5. **`webengine/` 目录**: 旧版代码（WebEngine 登录/上传），当前 HTTP 方案不再使用，待清理
 
 ---
 

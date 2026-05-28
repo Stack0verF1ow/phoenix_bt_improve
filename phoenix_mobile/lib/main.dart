@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 
 import 'app.dart';
+import 'services/settings_service.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const PhoenixHelperApp());
+  final settings = SettingsService();
+  await settings.load();
+  runApp(PhoenixHelperApp(settings: settings));
 }
