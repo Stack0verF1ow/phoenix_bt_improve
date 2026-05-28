@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../models/server_status.dart';
@@ -5,6 +7,8 @@ import '../models/server_status.dart';
 enum TransferState { idle, preparing, uploading, confirming, done, error }
 
 class TransferProvider extends ChangeNotifier {
+  Timer? _clearDoneTimer;
+
   // Upload
   TransferState _state = TransferState.idle;
   double _progress = 0;
@@ -27,6 +31,7 @@ class TransferProvider extends ChangeNotifier {
   // Files
   List<FileEntry> _files = [];
   bool _loadingFiles = false;
+  final Set<String> _downloadedFiles = {};
 
   // Upload
   TransferState get state => _state;
@@ -44,6 +49,7 @@ class TransferProvider extends ChangeNotifier {
   // Files
   List<FileEntry> get files => _files;
   bool get loadingFiles => _loadingFiles;
+  Set<String> get downloadedFiles => _downloadedFiles;
 
   void setProgress(double value) {
     _progress = value;
@@ -134,9 +140,15 @@ class TransferProvider extends ChangeNotifier {
 
   void setDownloadState(TransferState newState) {
     _downloadState = newState;
+    _clearDoneTimer?.cancel();
     if (newState == TransferState.done) {
       _downloadProgress = 1.0;
       _downloadSpeedText = '';
+      _clearDoneTimer = Timer(const Duration(seconds: 4), () {
+        _downloadState = TransferState.idle;
+        _downloadProgress = 0;
+        notifyListeners();
+      });
     }
     if (newState == TransferState.idle) {
       _downloadProgress = 0;
@@ -177,7 +189,13 @@ class TransferProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  void markDownloaded(String path) {
+    _downloadedFiles.add(path);
+    notifyListeners();
+  }
+
   void reset() {
+    _clearDoneTimer?.cancel();
     _state = TransferState.idle;
     _progress = 0;
     _error = null;
@@ -191,6 +209,7 @@ class TransferProvider extends ChangeNotifier {
     _downloadStart = null;
     _files = [];
     _loadingFiles = false;
+    _downloadedFiles.clear();
     notifyListeners();
   }
 }
