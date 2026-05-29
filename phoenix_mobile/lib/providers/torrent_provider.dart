@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:dtorrent_parser/dtorrent_parser.dart' hide TorrentFile;
@@ -19,6 +20,8 @@ class TorrentProvider extends ChangeNotifier {
   final BtDownloadService _btService = BtDownloadService();
   final Set<String> _selectedTorrents = {};
   bool _btSelectMode = false;
+  bool _syncInProgress = false;
+  Timer? _refreshTimer;
 
   List<TorrentFile> get torrents => _torrents;
   bool get loading => _loading;
@@ -28,20 +31,21 @@ class TorrentProvider extends ChangeNotifier {
 
   TorrentProvider() {
     _btService.addListener(() {
-      FileLogger.log('[TorrentProvider] bt listener: running=${_btService.running} completed=${_btService.completed}');
+      FileLogger.log('[TorrentProvider] bt listener: running=${_btService.running} completed=${_btService.completed} stopping=${_btService.stopping}');
       if (_btService.completed) {
-        // Delay sync to ensure .bt.state file is flushed to disk
-        Future.delayed(const Duration(seconds: 1), () {
-          FileLogger.log('[TorrentProvider] delayed syncTorrents (completed)');
-          syncTorrents();
-        });
-      } else if (!_btService.running) {
-        // Stopped/paused — re-sync status from disk
-        FileLogger.log('[TorrentProvider] immediate syncTorrents (paused/stopped)');
-        syncTorrents();
+        _scheduleSync(const Duration(seconds: 2));
+      } else if (!_btService.running && !_btService.stopping) {
+        _scheduleSync(const Duration(seconds: 1));
       } else {
-        // Progress update — just notify UI
         notifyListeners();
+      }
+    });
+  }
+
+  void _scheduleSync(Duration delay) {
+    Future.delayed(delay, () {
+      if (!_syncInProgress) {
+        syncTorrents();
       }
     });
   }
@@ -61,6 +65,9 @@ class TorrentProvider extends ChangeNotifier {
   }
 
   Future<void> syncTorrents() async {
+    if (_syncInProgress) return;
+    _syncInProgress = true;
+
     _loading = true;
     notifyListeners();
 
@@ -106,6 +113,7 @@ class TorrentProvider extends ChangeNotifier {
 
     _torrents = entries;
     _loading = false;
+    _syncInProgress = false;
     notifyListeners();
   }
 
@@ -189,5 +197,24 @@ class TorrentProvider extends ChangeNotifier {
 
   Future<void> stopDownload() async {
     await _btService.stopDownload();
+  }
+
+  void startPeriodicRefresh() {
+    _refreshTimer?.cancel();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      syncTorrents();
+    });
+  }
+
+  void stopPeriodicRefresh() {
+    _refreshTimer?.cancel();
+    _refreshTimer = null;
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    _btService.dispose();
+    super.dispose();
   }
 }
