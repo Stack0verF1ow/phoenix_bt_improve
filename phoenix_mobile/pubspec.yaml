@@ -43,6 +43,7 @@ dependencies:
   open_filex: ^4.7.0
   share_plus: ^10.1.4
   saf: ^1.0.4
+  dtorrent_task_v2: ^0.4.6
 
 dev_dependencies:
   flutter_test:
