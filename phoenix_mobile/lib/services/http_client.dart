@@ -146,8 +146,9 @@ class HttpClient {
     String saveDir, {
     void Function(int received, int total)? onProgress,
   }) async {
-    final parts = path.split('/');
-    final name = parts.isNotEmpty ? parts.last : 'download';
+    final name = path.contains('\\')
+        ? path.split('\\').last
+        : path.split('/').last;
     final savePath = '$saveDir/$name';
     await _dio.download(
       '/api/files/download',

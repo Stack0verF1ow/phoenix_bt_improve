@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import 'downloaded_files_screen.dart';
+import 'torrent_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -37,7 +38,7 @@ class HomeScreen extends StatelessWidget {
             _ActionCard(
               icon: Icons.wifi_tethering,
               title: '发送给手机',
-              subtitle: '展示二维码，让其他设备连接',
+              subtitle: '开启接收模式，让其他设备扫码传输文件',
               color: Colors.green,
               onTap: () => context.push('/receive'),
             ),
@@ -57,6 +58,16 @@ class HomeScreen extends StatelessWidget {
               color: Colors.orange,
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const DownloadedFilesScreen()),
+              ),
+            ),
+            const SizedBox(height: 16),
+            _ActionCard(
+              icon: Icons.cloud_download,
+              title: 'BT 下载',
+              subtitle: '导入 .torrent 文件，使用 uTorrent 下载',
+              color: Colors.teal,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const TorrentScreen()),
               ),
             ),
           ],
