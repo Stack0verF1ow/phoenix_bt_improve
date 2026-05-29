@@ -29,7 +29,6 @@ class BtDownloadService extends ChangeNotifier {
   int _startBytes = 0;
   DateTime _startTime = DateTime.now();
   String _savePath = '';
-  String? _torrentPath;
 
   bool get running => _running;
   double get progress => _progress;
@@ -78,7 +77,6 @@ class BtDownloadService extends ChangeNotifier {
   Future<void> startDownload(String torrentPath, String savePath) async {
     if (_running) return;
 
-    _torrentPath = torrentPath;
     _savePath = savePath;
 
     final metaInfo = await Torrent.parseFromFile(torrentPath);
@@ -102,7 +100,7 @@ class BtDownloadService extends ChangeNotifier {
     try {
       _task = TorrentTask.newTask(
         metaInfo, savePath,
-        false, null, null, null, _peerId,
+        false, null, null, null,
       );
 
       await _task!.start();
@@ -113,7 +111,7 @@ class BtDownloadService extends ChangeNotifier {
         await _wipeState();
         _task = TorrentTask.newTask(
           metaInfo, savePath,
-          false, null, null, null, _peerId,
+          false, null, null, null,
         );
         await _task!.start();
       }
