@@ -34,7 +34,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
         barrierDismissible: false,
         builder: (_) => AlertDialog(
           title: const Text('连接断开'),
-          content: const Text('电脑端已停止服务或网络断开'),
+          content: const Text('对方设备已停止服务或网络断开'),
           actions: [
             TextButton(
               onPressed: () async {
@@ -112,7 +112,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
               Expanded(
                 child: _ActionButton(
                   icon: Icons.upload_file,
-                  label: '上传到电脑',
+                  label: device.isPC ? '上传到电脑' : '上传到手机',
                   onTap: () => _navigateToUpload(context),
                 ),
               ),
@@ -120,7 +120,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
               Expanded(
                 child: _ActionButton(
                   icon: Icons.download,
-                  label: '从电脑下载',
+                  label: device.isPC ? '从电脑下载' : '从手机下载',
                   onTap: () => _navigateToDownload(context),
                 ),
               ),
@@ -173,11 +173,21 @@ class _StatusCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('设备信息',
-                style: Theme.of(context).textTheme.titleMedium),
+            Row(
+              children: [
+                Icon(
+                  device.isPC ? Icons.computer : Icons.phone_android,
+                  size: 20,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Text('设备信息',
+                    style: Theme.of(context).textTheme.titleMedium),
+              ],
+            ),
             const SizedBox(height: 8),
             _InfoRow(label: '本机', value: localName),
-            _InfoRow(label: '连接到', value: device.name),
+            _InfoRow(label: '连接到', value: '${device.name}（${device.isPC ? "电脑" : "手机"}）'),
             _InfoRow(label: 'IP', value: device.primaryHost),
             _InfoRow(label: '端口', value: '${device.port}'),
             if (status != null) ...[
