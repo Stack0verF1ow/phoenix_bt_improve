@@ -1,4 +1,5 @@
 import '../config/app_config.dart';
+import '../services/ip_probe.dart';
 
 class DeviceInfo {
   final int version;
@@ -21,6 +22,22 @@ class DeviceInfo {
   String get baseUrl => 'http://$primaryHost:$port';
 
   bool get isPC => type == 'pc';
+
+  /// Probe all hosts and return a new DeviceInfo with only the reachable one.
+  /// Falls back to the original if probing fails or only one host exists.
+  Future<DeviceInfo> withProbedHost() async {
+    if (hosts.length <= 1) return this;
+    final reachable = await probeReachableHost(hosts, port);
+    if (reachable == null) return this;
+    return DeviceInfo(
+      version: version,
+      type: type,
+      name: name,
+      hosts: [reachable],
+      port: port,
+      tokenPrefix: tokenPrefix,
+    );
+  }
 
   @override
   String toString() =>

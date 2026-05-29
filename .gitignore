@@ -60,7 +60,14 @@ desktop.ini
 .vscode/
 .idea/
 
+# Claude Code local config
+.claude/
+
+# Build artifacts
+*.zip
+
 # Debug and test artifacts
 查看种子的详细信息：*
 测试文件*.torrent
 测试文件*.exe
+同学生成的种子.torrent

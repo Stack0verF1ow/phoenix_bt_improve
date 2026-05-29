@@ -15,3 +15,15 @@ def get_lan_ips() -> list[str]:
     except Exception:
         pass
     return sorted(ips)
+
+
+def probe_ips(hosts: list[str], port: int, timeout: float = 3.0) -> str | None:
+    """Try TCP connect to each host:port, return the first reachable one."""
+    for host in hosts:
+        try:
+            sock = socket.create_connection((host, port), timeout=timeout)
+            sock.close()
+            return host
+        except (OSError, socket.timeout):
+            continue
+    return None
