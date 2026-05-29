@@ -6,6 +6,8 @@ class ServerStatus {
   final bool phoenixLoggedIn;
   final int filesAvailable;
   final int maxUploadSize;
+  final String deviceType; // 'pc' or 'phone'
+  final bool canAutoSeed;
 
   ServerStatus({
     required this.name,
@@ -15,6 +17,8 @@ class ServerStatus {
     required this.phoenixLoggedIn,
     required this.filesAvailable,
     required this.maxUploadSize,
+    this.deviceType = 'pc',
+    this.canAutoSeed = false,
   });
 
   factory ServerStatus.fromJson(Map<String, dynamic> json) {
@@ -26,8 +30,13 @@ class ServerStatus {
       phoenixLoggedIn: json['phoenix_logged_in'] as bool? ?? false,
       filesAvailable: json['files_available'] as int? ?? 0,
       maxUploadSize: json['max_upload_size'] as int? ?? 0,
+      deviceType: json['device_type'] as String? ?? 'pc',
+      canAutoSeed: json['can_auto_seed'] as bool? ?? false,
     );
   }
+
+  bool get isPC => deviceType == 'pc';
+  bool get isPhone => deviceType == 'phone';
 }
 
 class FileEntry {
