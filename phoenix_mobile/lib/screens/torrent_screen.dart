@@ -19,6 +19,8 @@ class TorrentScreen extends StatefulWidget {
 class _TorrentScreenState extends State<TorrentScreen> {
   static const _channel = MethodChannel('com.phoenixhelper/file_ops');
   TorrentProvider? _provider;
+  String? _completedBannerName;
+  Timer? _bannerTimer;
 
   @override
   void initState() {
@@ -27,14 +29,31 @@ class _TorrentScreenState extends State<TorrentScreen> {
       _provider = context.read<TorrentProvider>();
       _provider!.syncTorrents();
       _provider!.startPeriodicRefresh();
+      _provider!.onDownloadCompleted = _showCompletedBanner;
       _checkPendingTorrent();
     });
   }
 
   @override
   void dispose() {
+    _bannerTimer?.cancel();
     _provider?.stopPeriodicRefresh();
     super.dispose();
+  }
+
+  void _showCompletedBanner(String name) {
+    if (!mounted) return;
+    setState(() {
+      _completedBannerName = name;
+    });
+    _bannerTimer?.cancel();
+    _bannerTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted) {
+        setState(() {
+          _completedBannerName = null;
+        });
+      }
+    });
   }
 
   Future<void> _checkPendingTorrent() async {
@@ -189,9 +208,6 @@ class _TorrentScreenState extends State<TorrentScreen> {
   }
 
 Widget _buildBody(TorrentProvider provider, BtDownloadService bt) {
-    final anyCompleted = provider.torrents.any(
-        (t) => t.status == TorrentStatus.completed);
-
     if (bt.running) {
       return Column(
         children: [
@@ -211,12 +227,12 @@ Widget _buildBody(TorrentProvider provider, BtDownloadService bt) {
         ],
       );
     }
-    if (anyCompleted) {
+    if (_completedBannerName != null) {
       return Column(
         children: [
-          const Padding(
-              padding: EdgeInsets.all(8),
-              child: Text('下载完成!', style: TextStyle(color: Colors.green))),
+          Padding(
+              padding: const EdgeInsets.all(8),
+              child: Text('下载完成!', style: const TextStyle(color: Colors.green))),
           Expanded(child: _buildTorrentList(provider)),
         ],
       );
