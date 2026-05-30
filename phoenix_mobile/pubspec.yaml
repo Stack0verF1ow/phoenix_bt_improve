@@ -44,6 +44,7 @@ dependencies:
   share_plus: ^10.1.4
   saf: ^1.0.4
   dtorrent_task_v2: ^0.4.6
+  path: ^1.9.0
 
 dependency_overrides:
   dtorrent_task_v2:
@@ -59,6 +60,10 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
+
+dependency_overrides:
+  dtorrent_task_v2:
+    path: packages/dtorrent_task_v2
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

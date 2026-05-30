@@ -14,8 +14,10 @@ class ConnectionProvider extends ChangeNotifier {
   bool _serverLost = false;
   bool _transferring = false;
   int _consecutiveFailures = 0;
+  int _lastFileVersion = -1;
   static const _maxFailures = 2;
   Timer? _heartbeat;
+  void Function()? onFilesChanged;
 
   HttpClient? get client => _client;
   DeviceInfo? get device => _client?.device;
@@ -47,6 +49,7 @@ class ConnectionProvider extends ChangeNotifier {
       await client.register(localName: localName);
       _client = client;
       _status = await client.getStatus();
+      _lastFileVersion = _status!.fileListVersion;
       _connecting = false;
       _startHeartbeat();
       notifyListeners();
@@ -77,12 +80,18 @@ class ConnectionProvider extends ChangeNotifier {
     _heartbeat = Timer.periodic(const Duration(seconds: 1), (_) async {
       if (_client == null || _transferring) return;
       try {
-        await _client!.getStatus();
+        final status = await _client!.getStatus();
         _consecutiveFailures = 0;
         if (_serverLost) {
           _serverLost = false;
           notifyListeners();
         }
+        // Detect file list version change
+        final v = status.fileListVersion;
+        if (_lastFileVersion >= 0 && v != _lastFileVersion) {
+          onFilesChanged?.call();
+        }
+        _lastFileVersion = v;
       } catch (_) {
         _consecutiveFailures++;
         if (_consecutiveFailures >= _maxFailures && !_serverLost) {
@@ -107,6 +116,8 @@ class ConnectionProvider extends ChangeNotifier {
     _serverLost = false;
     _consecutiveFailures = 0;
     _transferring = false;
+    _lastFileVersion = -1;
+    onFilesChanged = null;
     notifyListeners();
   }
 

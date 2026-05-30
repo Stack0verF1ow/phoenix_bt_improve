@@ -9,7 +9,8 @@ import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Signal, QObject
+from PySide6.QtCore import Qt, QThread, Signal, QObject
+from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QFileDialog,
     QGroupBox,
@@ -163,12 +164,16 @@ class LanTab(QWidget):
         self.signals.file_downloaded.connect(self._on_file_downloaded_ui)
         self.signals.download_progress.connect(self._on_download_progress_ui)
 
-    def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        self.setAcceptDrops(True)
 
+    def _build_ui(self) -> None:
+        main_layout = QHBoxLayout(self)
+
+        # Left column: QR + controls + devices
+        left_col = QVBoxLayout()
         self.qr_widget = QrDisplayWidget()
         self.qr_widget.refresh_btn.clicked.connect(self._refresh_qr)
-        layout.addWidget(self.qr_widget)
+        left_col.addWidget(self.qr_widget)
 
         ctrl_layout = QHBoxLayout()
         self.start_btn = QPushButton("启动服务")
@@ -176,39 +181,15 @@ class LanTab(QWidget):
             "QPushButton { font-size: 14px; padding: 6px 20px; }"
         )
         self.start_btn.clicked.connect(self._toggle_server)
-
         self.port_spin = QSpinBox()
         self.port_spin.setRange(1024, 65535)
         self.port_spin.setValue(self.config.lan_port)
-
         ctrl_layout.addWidget(QLabel("端口："))
         ctrl_layout.addWidget(self.port_spin)
         ctrl_layout.addStretch(1)
         ctrl_layout.addWidget(self.start_btn)
-        layout.addLayout(ctrl_layout)
+        left_col.addLayout(ctrl_layout)
 
-        # Shared files section
-        share_group = QGroupBox("共享文件（手机端可下载）")
-        share_layout = QVBoxLayout(share_group)
-
-        share_btn_layout = QHBoxLayout()
-        self.pick_files_btn = QPushButton("选择文件...")
-        self.pick_files_btn.clicked.connect(self._pick_files)
-        self.clear_files_btn = QPushButton("清空")
-        self.clear_files_btn.clicked.connect(self._clear_shared_files)
-        self.file_count_label = QLabel("未选择任何文件")
-        share_btn_layout.addWidget(self.pick_files_btn)
-        share_btn_layout.addWidget(self.clear_files_btn)
-        share_btn_layout.addStretch(1)
-        share_btn_layout.addWidget(self.file_count_label)
-        share_layout.addLayout(share_btn_layout)
-
-        self.shared_files_list = QListWidget()
-        self.shared_files_list.setMaximumHeight(140)
-        share_layout.addWidget(self.shared_files_list)
-        layout.addWidget(share_group)
-
-        # Connected devices section
         device_group = QGroupBox("已连接设备")
         device_layout = QVBoxLayout(device_group)
         self.device_table = QTableWidget(0, 3)
@@ -219,16 +200,70 @@ class LanTab(QWidget):
         self.device_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.device_table.setMaximumHeight(120)
         device_layout.addWidget(self.device_table)
-        layout.addWidget(device_group)
+        left_col.addWidget(device_group)
+        main_layout.addLayout(left_col)
+
+        # Right column: shared files + log
+        right_col = QVBoxLayout()
+
+        share_group = QGroupBox("共享文件（手机端可下载）")
+        share_layout = QVBoxLayout(share_group)
+
+        share_btn_layout = QHBoxLayout()
+        self.pick_files_btn = QPushButton("选择文件")
+        self.pick_files_btn.setStyleSheet(
+            "QPushButton { font-size: 13px; padding: 6px 16px; color: #1976D2; border: 1px solid #1976D2; border-radius: 3px; background: white; }"
+            "QPushButton:hover { background: #E3F2FD; }"
+        )
+        self.pick_files_btn.clicked.connect(self._pick_files)
+        self.pick_folder_btn = QPushButton("选择文件夹")
+        self.pick_folder_btn.setStyleSheet(
+            "QPushButton { font-size: 13px; padding: 6px 16px; color: #1976D2; border: 1px solid #1976D2; border-radius: 3px; background: white; }"
+            "QPushButton:hover { background: #E3F2FD; }"
+        )
+        self.pick_folder_btn.clicked.connect(self._pick_folder)
+        self.clear_files_btn = QPushButton("清空")
+        self.delete_selected_btn = QPushButton("删除选中")
+        self.delete_selected_btn.clicked.connect(self._delete_selected_files)
+        share_btn_layout.addWidget(self.pick_files_btn)
+        share_btn_layout.addWidget(self.pick_folder_btn)
+        share_btn_layout.addStretch(1)
+        share_btn_layout.addWidget(self.clear_files_btn)
+        share_btn_layout.addWidget(self.delete_selected_btn)
+        share_layout.addLayout(share_btn_layout)
+
+        # Drop hint area
+        self._share_drop_hint = QLabel("拖放文件或文件夹到此处")
+        self._share_drop_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._share_drop_hint.setMinimumHeight(80)
+        self._share_drop_hint.setStyleSheet(
+            "QLabel {"
+            "  border: 2px dashed #ccc;"
+            "  border-radius: 6px;"
+            "  padding: 14px;"
+            "  color: #999;"
+            "  font-size: 13px;"
+            "}"
+            "QLabel:hover { border-color: #1976D2; color: #1976D2; }"
+        )
+        share_layout.addWidget(self._share_drop_hint)
+
+        self.shared_files_list = QListWidget()
+        self.shared_files_list.setSelectionMode(
+            QListWidget.SelectionMode.ExtendedSelection)
+        share_layout.addWidget(self.shared_files_list)
+
+        self.file_count_label = QLabel("未选择任何文件")
+        self.file_count_label.setStyleSheet("color: #999; font-size: 12px; padding: 2px;")
+        share_layout.addWidget(self.file_count_label)
+        right_col.addWidget(share_group)
 
         log_group = QGroupBox("传输记录")
         log_layout = QVBoxLayout(log_group)
         self.transfer_log = LogBox()
-        self.transfer_log.setMaximumHeight(200)
         log_layout.addWidget(self.transfer_log)
-        layout.addWidget(log_group)
-
-        layout.addStretch(1)
+        right_col.addWidget(log_group)
+        main_layout.addLayout(right_col)
 
     def _pick_files(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(self, "选择要共享的文件")
@@ -238,6 +273,19 @@ class LanTab(QWidget):
         self.server.add_shared_files([Path(p) for p in paths])
         self._refresh_shared_files_list()
         self._append_log(f"已添加 {len(paths)} 个文件到共享列表")
+
+    def _pick_folder(self) -> None:
+        paths = QFileDialog.getExistingDirectory(self, "选择要共享的文件夹")
+        if not paths:
+            return
+        from pathlib import Path
+        folder = Path(paths)
+        if not folder.is_dir():
+            return
+        files = [f for f in folder.iterdir() if f.is_file()]
+        self.server.add_shared_files(files)
+        self._refresh_shared_files_list()
+        self._append_log(f"已添加 {len(files)} 个文件从 {folder.name}")
 
     def _clear_shared_files(self) -> None:
         count = len(self.server.shared_files)
@@ -398,6 +446,27 @@ class LanTab(QWidget):
                 except Exception as exc:
                     LOGGER.warning("Failed to open folder %s: %s", folder, exc)
 
+    def _delete_selected_files(self) -> None:
+        """Remove selected files from the shared list."""
+        selected = self.shared_files_list.selectedItems()
+        if not selected:
+            return
+        count = 0
+        for item in selected:
+            row = self.shared_files_list.row(item)
+            self.shared_files_list.takeItem(row)
+            # The actual file removal relies on server's shared_files list
+            # We need to find the matching path
+            text = item.text()
+            name = text.rsplit("  (", 1)[0] if "  (" in text else text
+            for fp in list(self.server.shared_files):
+                if fp.name == name:
+                    self.server.remove_shared_file(fp)
+                    count += 1
+        self._refresh_shared_files_list()
+        if count:
+            self._append_log(f"已删除 {count} 个文件")
+
     def _append_log(self, message: str) -> None:
         self.transfer_log.append_line(message)
 
@@ -408,3 +477,55 @@ class LanTab(QWidget):
                 return f"{size:.1f} {unit}"
             size /= 1024
         return f"{size:.1f} PB"
+
+    # ── Drag & Drop ──────────────────────────────────────────
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            self._share_drop_hint.setStyleSheet(
+                "QLabel {"
+                "  border: 2px dashed #4CAF50;"
+                "  border-radius: 6px;"
+                "  padding: 14px;"
+                "  color: #4CAF50;"
+                "  font-size: 13px;"
+                "  background-color: #E8F5E9;"
+                "}"
+            )
+            self._share_drop_hint.setText("松开鼠标即可添加文件")
+
+    def dragLeaveEvent(self, event) -> None:
+        self._reset_drop_hint()
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        self._reset_drop_hint()
+        urls = event.mimeData().urls()
+        if not urls:
+            return
+        paths = []
+        for url in urls:
+            p = Path(url.toLocalFile())
+            if p.exists():
+                if p.is_dir():
+                    paths.extend(f for f in p.iterdir() if f.is_file())
+                else:
+                    paths.append(p)
+        if paths:
+            self.server.add_shared_files(paths)
+            self._refresh_shared_files_list()
+            self._append_log(f"拖拽添加了 {len(paths)} 个文件")
+            event.acceptProposedAction()
+
+    def _reset_drop_hint(self) -> None:
+        self._share_drop_hint.setText("拖放文件或文件夹到此处")
+        self._share_drop_hint.setStyleSheet(
+            "QLabel {"
+            "  border: 2px dashed #ccc;"
+            "  border-radius: 6px;"
+            "  padding: 14px;"
+            "  color: #999;"
+            "  font-size: 13px;"
+            "}"
+            "QLabel:hover { border-color: #1976D2; color: #1976D2; }"
+        )

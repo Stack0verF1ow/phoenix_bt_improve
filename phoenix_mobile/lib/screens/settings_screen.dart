@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../services/settings_service.dart';
+import '../utils/file_logger.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -116,7 +117,63 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: const Text('保存'),
             ),
           ),
+          const SizedBox(height: 24),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.bug_report),
+            title: const Text('查看调试日志'),
+            subtitle: Text(FileLogger.filePath ?? '未初始化',
+                style: const TextStyle(fontSize: 11)),
+            onTap: () async {
+              final content = await FileLogger.readAll();
+              if (!context.mounted) return;
+              Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => _LogViewerScreen(content: content),
+              ));
+            },
+          ),
         ],
+      ),
+    );
+  }
+}
+
+class _LogViewerScreen extends StatelessWidget {
+  final String content;
+  const _LogViewerScreen({required this.content});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('调试日志'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.copy),
+            tooltip: '复制全部',
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: content));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('日志已复制到剪贴板')),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete_outline),
+            tooltip: '清空日志',
+            onPressed: () async {
+              await FileLogger.clear();
+              if (context.mounted) Navigator.of(context).pop();
+            },
+          ),
+        ],
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(12),
+        child: SelectableText(
+          content.isEmpty ? '(日志为空)' : content,
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+        ),
       ),
     );
   }
