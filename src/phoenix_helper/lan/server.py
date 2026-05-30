@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from phoenix_helper.config import AppConfig
+from phoenix_helper.lan.chunk_store import ChunkStore
 from phoenix_helper.lan.file_store import FileStore
 from phoenix_helper.lan.ip_utils import get_lan_ips
 
@@ -37,7 +38,7 @@ LOGGER = logging.getLogger(__name__)
 # ── rate limiter ──────────────────────────────────────────────────
 
 _RATE_LIMIT_WINDOW = 60.0  # seconds
-_RATE_LIMIT_MAX = 60        # requests per window per IP
+_RATE_LIMIT_MAX = 200        # requests per window per IP
 
 
 class _RateLimiter:
@@ -119,7 +120,8 @@ class _DeviceRegistry:
 
 class _Session:
     __slots__ = ("id", "files", "file_ids", "file_tokens", "received",
-                 "seed_data", "seed_status", "created_at", "peer_ip")
+                 "seed_data", "seed_status", "created_at", "peer_ip",
+                 "chunked_files")
 
     def __init__(self, sid: str, peer_ip: str) -> None:
         self.id = sid
@@ -131,6 +133,7 @@ class _Session:
         self.seed_status: str = "idle"            # idle|seeding|done|error
         self.created_at = time.monotonic()
         self.peer_ip = peer_ip
+        self.chunked_files: set[str] = set()
 
 
 class _SessionManager:
@@ -169,6 +172,11 @@ class _SessionManager:
                 expired = [sid for sid, s in self._sessions.items()
                            if now - s.created_at >= _SESSION_TTL]
                 for sid in expired:
+                    s = self._sessions.get(sid)
+                    if s and hasattr(s, 'chunked_files') and s.chunked_files:
+                        cs = getattr(LanRequestHandler, 'chunk_store', None)
+                        if cs:
+                            cs.cleanup_session(sid)
                     del self._sessions[sid]
 
 
@@ -182,6 +190,7 @@ class LanRequestHandler(BaseHTTPRequestHandler):
 
     config: AppConfig = None
     file_store: FileStore = None
+    chunk_store: ChunkStore = None
     qr_token: str = ""          # the 6-char prefix from QR code
     full_token: str = ""        # the full SHA256 token
     on_seed_ready: Callable | None = None
@@ -311,8 +320,7 @@ class LanRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_register(self) -> None:
         """POST /api/register — exchange QR token for full session."""
-        if not self._check_rate():
-            return
+        # No rate limit for registration — it's a one-time handshake
         try:
             data = json.loads(self._read_body())
         except Exception:
@@ -334,7 +342,7 @@ class LanRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_status(self) -> None:
         """GET /api/status — return PC capabilities."""
-        if not self._check_auth_and_rate():
+        if not self._check_auth():
             return
         try:
             from phoenix_helper.clients.discovery import find_utorrent_executable
@@ -351,6 +359,7 @@ class LanRequestHandler(BaseHTTPRequestHandler):
             "max_upload_size": 10 * 1024 * 1024 * 1024,  # 10 GB hint
             "device_type": "pc",
             "can_auto_seed": True,
+            "fileListVersion": self.server_ref._file_list_version if self.server_ref else 0,
         })
 
     def _handle_prepare_upload(self) -> None:
@@ -382,21 +391,38 @@ class LanRequestHandler(BaseHTTPRequestHandler):
             return
 
         session = self._sessions.create(self._client_ip)
+        resp_chunk_size: int | None = None
         for fid, finfo in files.items():
+            chunk_size = int(finfo.get("chunkSize", 0)) or None
             session.files[fid] = {
                 "name": finfo.get("name", "unknown"),
                 "size": int(finfo.get("size", 0)),
                 "type": finfo.get("type", "application/octet-stream"),
             }
+            if chunk_size:
+                session.files[fid]["chunkSize"] = chunk_size
             session.file_ids.append(fid)
             tok = secrets.token_hex(6)  # 12 hex chars
             session.file_tokens[fid] = tok
+            if chunk_size:
+                session.chunked_files.add(fid)
+                self.chunk_store.prepare_file(
+                    session_id=session.id,
+                    file_id=fid,
+                    file_name=finfo.get("name", "unknown"),
+                    file_size=int(finfo.get("size", 0)),
+                    file_type=finfo.get("type", "application/octet-stream"),
+                    file_token=tok,
+                    chunk_size=chunk_size,
+                )
+                resp_chunk_size = chunk_size
 
         LOGGER.info("Session %s prepared with %d files from %s",
                     session.id, len(files), self._client_ip)
         self._send_json(200, {
             "sessionId": session.id,
             "fileTokens": session.file_tokens,
+            "chunkSize": resp_chunk_size or self.chunk_store.chunk_size,
             "expires_in": int(_SESSION_TTL),
         })
 
@@ -413,6 +439,9 @@ class LanRequestHandler(BaseHTTPRequestHandler):
         sid = (qs.get("sessionId") or [None])[0]
         fid = (qs.get("fileId") or [None])[0]
         token = (qs.get("token") or [None])[0]
+        chunk_index_str = (qs.get("chunkIndex") or [None])[0]
+        chunk_hash = (qs.get("chunkHash") or [None])[0]
+        chunk_index = int(chunk_index_str) if chunk_index_str is not None else None
 
         if not sid or not fid or not token:
             self._send_error(400, "Missing sessionId, fileId, or token")
@@ -432,6 +461,53 @@ class LanRequestHandler(BaseHTTPRequestHandler):
         if not expected_token or token != expected_token:
             self._send_error(403, "Invalid file token")
             return
+
+        # ── chunked upload path ──
+        if fid in session.chunked_files and chunk_index is not None:
+            file_data = self._read_body()
+            try:
+                result = self.chunk_store.write_chunk(
+                    session_id=sid,
+                    file_id=fid,
+                    chunk_index=chunk_index,
+                    data=file_data,
+                )
+            except FileNotFoundError:
+                self._send_error(404, "Session or file meta not found")
+                return
+
+            if result["status"] == "duplicate":
+                self._send_json(409, {
+                    "status": "duplicate",
+                    "fileId": fid,
+                    "chunkIndex": chunk_index,
+                    "chunksReceived": result["chunksReceived"],
+                    "totalChunks": result["totalChunks"],
+                })
+                return
+
+            if self.server_ref and self.server_ref.on_upload_progress:
+                finfo = session.files[fid]
+                total_chunks = result["totalChunks"]
+                if total_chunks > 0:
+                    progress = len(result["chunksReceived"]) / total_chunks
+                    self.server_ref.on_upload_progress(
+                        finfo["name"], int(progress * finfo["size"]),
+                        finfo["size"],
+                        len(session.received) + len(session.chunked_files),
+                        len(session.file_ids),
+                    )
+
+            self._send_json(200, {
+                "status": "chunk_received",
+                "fileId": fid,
+                "chunkIndex": chunk_index,
+                "chunksReceived": result["chunksReceived"],
+                "totalChunks": result["totalChunks"],
+            })
+            return
+
+        # ── legacy whole-file upload path ──
 
         content_length = int(self.headers.get("Content-Length", 0))
         if content_length <= 0:
@@ -496,40 +572,87 @@ class LanRequestHandler(BaseHTTPRequestHandler):
             return
 
         auto_seed = body.get("auto_seed", False)
+        file_hashes = body.get("fileHashes") or {}
         uploads_info = []
 
         for fid in session.file_ids:
-            file_data = session.received.get(fid)
-            if file_data is None:
-                continue
-            # Persist to disk now
-            upload_id = self.file_store.create_upload(
-                session.files[fid]["name"], file_data
-            )
-            uploads_info.append({
-                "uploadId": upload_id,
-                "name": session.files[fid]["name"],
-                "size": len(file_data),
-            })
+            finfo = session.files[fid]
 
-            if self.server_ref and self.server_ref.on_file_received:
-                self.server_ref.on_file_received(upload_id, session.files[fid]["name"])
-
-            # Trigger auto-seed for the last file (single-title granularity)
-            if auto_seed and self.on_seed_ready and fid == session.file_ids[-1]:
-                t = threading.Thread(
-                    target=self.on_seed_ready,
-                    args=(
-                        upload_id,
-                        body.get("title", ""),
-                        body.get("category", "0"),
-                        body.get("description", ""),
-                        body.get("tags", []),
-                    ),
-                    daemon=True,
+            if fid in session.chunked_files:
+                file_hash = file_hashes.get(fid)
+                final_path = self.chunk_store.finalize_file(
+                    session_id=sid,
+                    file_id=fid,
+                    expected_sha256=file_hash,
                 )
-                t.start()
-                session.seed_status = "seeding"
+                if final_path is None:
+                    self._send_json(400, {
+                        "status": "error",
+                        "message": f"File '{fid}' incomplete or integrity check failed",
+                    })
+                    return
+                file_size = final_path.stat().st_size
+                upload_id = str(uuid.uuid4())
+                uploads_info.append({
+                    "uploadId": upload_id,
+                    "name": finfo["name"],
+                    "size": file_size,
+                })
+                self.file_store.update_meta(upload_id, **{
+                    "file_path": str(final_path),
+                    "original_name": finfo["name"],
+                    "size": file_size,
+                })
+
+                if self.server_ref and self.server_ref.on_file_received:
+                    self.server_ref.on_file_received(upload_id, finfo["name"])
+
+                if auto_seed and self.on_seed_ready and fid == session.file_ids[-1]:
+                    t = threading.Thread(
+                        target=self.on_seed_ready,
+                        args=(
+                            upload_id,
+                            body.get("title", ""),
+                            body.get("category", "0"),
+                            body.get("description", ""),
+                            body.get("tags", []),
+                        ),
+                        daemon=True,
+                    )
+                    t.start()
+                    session.seed_status = "seeding"
+            else:
+                file_data = session.received.get(fid)
+                if file_data is None:
+                    continue
+                upload_id = self.file_store.create_upload(
+                    finfo["name"], file_data
+                )
+                uploads_info.append({
+                    "uploadId": upload_id,
+                    "name": finfo["name"],
+                    "size": len(file_data),
+                })
+
+                if self.server_ref and self.server_ref.on_file_received:
+                    self.server_ref.on_file_received(upload_id, finfo["name"])
+
+                if auto_seed and self.on_seed_ready and fid == session.file_ids[-1]:
+                    t = threading.Thread(
+                        target=self.on_seed_ready,
+                        args=(
+                            upload_id,
+                            body.get("title", ""),
+                            body.get("category", "0"),
+                            body.get("description", ""),
+                            body.get("tags", []),
+                        ),
+                        daemon=True,
+                    )
+                    t.start()
+                    session.seed_status = "seeding"
+
+        self.chunk_store.cleanup_session(sid)
 
         self._sessions.remove(sid)
         self._send_json(200, {
@@ -538,27 +661,58 @@ class LanRequestHandler(BaseHTTPRequestHandler):
         })
 
     def _handle_upload_status(self, sid: str) -> None:
-        """GET /api/upload/<sid> — poll session status."""
-        if not self._check_auth_and_rate():
+        """GET /api/upload/<sid> — poll session status, optionally with chunk details."""
+        if not self._check_auth():
             return
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+
         session = self._sessions.get(sid)
         if not session:
             self._send_json(200, {"sessionId": sid, "status": "expired"})
             return
-        received_count = len(session.received)
-        total_count = len(session.file_ids)
-        self._send_json(200, {
+
+        file_id = (qs.get("fileId") or [None])[0]
+        token = (qs.get("token") or [None])[0]
+
+        base_response: dict[str, Any] = {
             "sessionId": sid,
             "status": "active",
-            "files_received": received_count,
-            "files_total": total_count,
+            "files_received": len(session.received) + len(session.chunked_files),
+            "files_total": len(session.file_ids),
             "seed_status": session.seed_status,
-            "received": [
-                {"fileId": fid, "name": session.files[fid]["name"],
-                 "size": len(session.received.get(fid, b""))}
-                for fid in session.file_ids if fid in session.received
-            ],
-        })
+        }
+
+        if file_id:
+            if token != session.file_tokens.get(file_id):
+                self._send_error(403, "Invalid file token")
+                return
+            chunk_status = self.chunk_store.get_chunk_status(sid, file_id)
+            base_response["file_chunks"] = {file_id: chunk_status} if chunk_status else {}
+            self._send_json(200, base_response)
+            return
+
+        received_list = []
+        for fid in session.file_ids:
+            if fid in session.chunked_files:
+                chunk_status = self.chunk_store.get_chunk_status(sid, fid)
+                if chunk_status:
+                    received_list.append({
+                        "fileId": fid,
+                        "name": session.files[fid]["name"],
+                        "size": session.files[fid]["size"],
+                        "chunked": True,
+                        "chunksReceived": len(chunk_status["chunksReceived"]),
+                        "totalChunks": chunk_status["totalChunks"],
+                    })
+            elif fid in session.received:
+                received_list.append({
+                    "fileId": fid,
+                    "name": session.files[fid]["name"],
+                    "size": len(session.received[fid]),
+                    "chunked": False,
+                })
+        self._send_json(200, {**base_response, "received": received_list})
 
     def _handle_cancel(self) -> None:
         """POST /api/cancel — cancel an upload session."""
@@ -589,7 +743,7 @@ class LanRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_list_files(self) -> None:
         """GET /api/files — list files shared by the PC user."""
-        if not self._check_auth_and_rate():
+        if not self._check_auth():
             return
 
         shared = getattr(self.server_ref, 'shared_files', [])
@@ -637,16 +791,38 @@ class LanRequestHandler(BaseHTTPRequestHandler):
             self._send_error(500, "Cannot access file")
             return
 
-        self.send_response(200)
-        self.send_header("Content-Type", "application/octet-stream")
+        # Support Range header for resume
+        range_header = self.headers.get("Range", "")
+        start = 0
+        if range_header.startswith("bytes="):
+            try:
+                start = int(range_header.split("=")[1].split("-")[0])
+                if start >= file_size:
+                    self._send_error(416, "Range not satisfiable")
+                    return
+            except (ValueError, IndexError):
+                start = 0
+
+        if start > 0:
+            self.send_response(206)
+            self.send_header("Content-Range",
+                             f"bytes {start}-{file_size - 1}/{file_size}")
+            content_length = file_size - start
+        else:
+            self.send_response(200)
+            content_length = file_size
+
         safe_name = file_path.name.encode("ascii", "replace").decode("ascii")
+        self.send_header("Content-Type", "application/octet-stream")
         self.send_header("Content-Disposition",
                          f'attachment; filename="{safe_name}"')
-        self.send_header("Content-Length", str(file_size))
+        self.send_header("Content-Length", str(content_length))
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         sent = 0
         with open(file_path, "rb") as f:
+            if start > 0:
+                f.seek(start)
             while True:
                 chunk = f.read(65536)
                 if not chunk:
@@ -686,6 +862,7 @@ class LanServer:
     def __init__(self, config: AppConfig) -> None:
         self.config = config
         self.file_store = FileStore(config.upload_receive_dir)
+        self.chunk_store = ChunkStore(config.upload_receive_dir)
         self._server: HTTPServer | None = None
         self._thread: threading.Thread | None = None
         self.on_seed_ready: Callable | None = None
@@ -697,6 +874,7 @@ class LanServer:
         self.serve_dirs: list[Path] | None = None
         self.shared_files: list[Path] = []
         self._full_token: str = ""
+        self._file_list_version: int = 0
 
     @property
     def is_running(self) -> bool:
@@ -719,6 +897,7 @@ class LanServer:
 
         LanRequestHandler.config = self.config
         LanRequestHandler.file_store = self.file_store
+        LanRequestHandler.chunk_store = self.chunk_store
         LanRequestHandler.qr_token = self.qr_token
         LanRequestHandler.full_token = self._full_token
         LanRequestHandler.on_seed_ready = self.on_seed_ready
@@ -735,20 +914,30 @@ class LanServer:
         LOGGER.info("QR token: %s", self.qr_token)
         return actual_port
 
-    def add_shared_files(self, paths: list[Path]) -> None:
-        """Add files to the shared file list (deduplicated)."""
+    def add_shared_files(self, paths: list[Path]) -> int:
+        """Add files to the shared file list (deduplicated). Returns count added."""
         existing = set(self.shared_files)
+        added = 0
         for p in paths:
             if p not in existing and p.is_file():
                 self.shared_files.append(p)
                 existing.add(p)
+                added += 1
+        if added:
+            self._file_list_version += 1
+        return added
 
     def remove_shared_file(self, path: Path) -> None:
         """Remove a file from the shared list."""
+        before = len(self.shared_files)
         self.shared_files = [f for f in self.shared_files if f != path]
+        if len(self.shared_files) != before:
+            self._file_list_version += 1
 
     def clear_shared_files(self) -> None:
-        self.shared_files.clear()
+        if self.shared_files:
+            self.shared_files.clear()
+            self._file_list_version += 1
 
     def stop(self) -> None:
         if self._server:

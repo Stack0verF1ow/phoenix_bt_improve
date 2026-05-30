@@ -4,7 +4,31 @@ import 'package:flutter/foundation.dart';
 
 import '../models/server_status.dart';
 
-enum TransferState { idle, preparing, uploading, confirming, done, error }
+enum TransferState { idle, preparing, uploading, confirming, done, error, paused }
+
+class ChunkedUploadState {
+  final String sessionId;
+  final String fileId;
+  final String token;
+  final String filePath;
+  final int fileSize;
+  final int chunkSize;
+  final int totalChunks;
+  final Set<int> completedChunks;
+  bool isPaused;
+
+  ChunkedUploadState({
+    required this.sessionId,
+    required this.fileId,
+    required this.token,
+    required this.filePath,
+    required this.fileSize,
+    required this.chunkSize,
+    required this.totalChunks,
+    Set<int>? completedChunks,
+    this.isPaused = false,
+  }) : completedChunks = completedChunks ?? {};
+}
 
 class TransferProvider extends ChangeNotifier {
   Timer? _clearDoneTimer;
@@ -18,6 +42,7 @@ class TransferProvider extends ChangeNotifier {
   DateTime? _transferStart;
   int _lastBytes = 0;
   DateTime? _lastSpeedUpdate;
+  ChunkedUploadState? _chunkedState;
 
   // Download
   TransferState _downloadState = TransferState.idle;
@@ -27,6 +52,7 @@ class TransferProvider extends ChangeNotifier {
   DateTime? _downloadStart;
   int _downloadLastBytes = 0;
   DateTime? _downloadLastSpeedUpdate;
+  bool _downloadPaused = false;
 
   // Files
   List<FileEntry> _files = [];
@@ -39,12 +65,15 @@ class TransferProvider extends ChangeNotifier {
   String? get error => _error;
   String get statusText => _statusText;
   String get speedText => _speedText;
+  ChunkedUploadState? get chunkedState => _chunkedState;
+  bool get isPaused => _chunkedState?.isPaused ?? false;
 
   // Download
   TransferState get downloadState => _downloadState;
   double get downloadProgress => _downloadProgress;
   String? get downloadError => _downloadError;
   String get downloadSpeedText => _downloadSpeedText;
+  bool get isDownloadPaused => _downloadPaused;
 
   // Files
   List<FileEntry> get files => _files;
@@ -110,6 +139,7 @@ class TransferProvider extends ChangeNotifier {
       _error = null;
       _speedText = '';
       _transferStart = null;
+      _chunkedState = null;
     }
     if (newState == TransferState.uploading) {
       _transferStart = null;
@@ -129,6 +159,32 @@ class TransferProvider extends ChangeNotifier {
     _error = null;
     if (_state == TransferState.error) {
       _state = TransferState.idle;
+    }
+    notifyListeners();
+  }
+
+  void setChunkedState(ChunkedUploadState? state) {
+    _chunkedState = state;
+    notifyListeners();
+  }
+
+  void togglePause() {
+    if (_chunkedState == null) return;
+    _chunkedState!.isPaused = !_chunkedState!.isPaused;
+    if (_chunkedState!.isPaused) {
+      _state = TransferState.paused;
+    } else {
+      _state = TransferState.uploading;
+    }
+    notifyListeners();
+  }
+
+  void toggleDownloadPause() {
+    _downloadPaused = !_downloadPaused;
+    if (_downloadPaused) {
+      _downloadState = TransferState.paused;
+    } else {
+      _downloadState = TransferState.uploading;
     }
     notifyListeners();
   }
@@ -155,6 +211,7 @@ class TransferProvider extends ChangeNotifier {
       _downloadError = null;
       _downloadSpeedText = '';
       _downloadStart = null;
+      _downloadPaused = false;
     }
     if (newState == TransferState.uploading) {
       _downloadStart = null;
@@ -202,6 +259,7 @@ class TransferProvider extends ChangeNotifier {
     _statusText = '';
     _speedText = '';
     _transferStart = null;
+    _chunkedState = null;
     _downloadState = TransferState.idle;
     _downloadProgress = 0;
     _downloadError = null;
