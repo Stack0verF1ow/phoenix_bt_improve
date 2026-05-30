@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
@@ -8,6 +9,7 @@ import '../models/server_status.dart';
 import '../providers/connection_provider.dart';
 import '../providers/transfer_provider.dart';
 import '../services/settings_service.dart';
+import '../utils/file_logger.dart';
 
 class DownloadScreen extends StatefulWidget {
   const DownloadScreen({super.key});
@@ -19,6 +21,7 @@ class DownloadScreen extends StatefulWidget {
 class _DownloadScreenState extends State<DownloadScreen> {
   Timer? _errorTimer;
   String? _downloadingFilePath;
+  bool _userCancelled = false;
 
   @override
   void initState() {
@@ -30,6 +33,29 @@ class _DownloadScreenState extends State<DownloadScreen> {
   void dispose() {
     _errorTimer?.cancel();
     super.dispose();
+  }
+
+  /// Check if a partial file exists for the given remote path.
+  String? _getPartialFilePath(String remotePath, int remoteSize) {
+    final dir = context.read<SettingsService>().downloadDir;
+    final name = remotePath.contains('\\')
+        ? remotePath.split('\\').last
+        : remotePath.split('/').last;
+    final path = '$dir/$name';
+    final f = File(path);
+    if (f.existsSync() && f.lengthSync() > 0) {
+      if (remoteSize > 0 && f.lengthSync() >= remoteSize) {
+        return null;
+      }
+      FileLogger.log('[_getPartialFilePath] found partial: $path (${f.lengthSync()} bytes)');
+      return path;
+    }
+    return null;
+  }
+
+  String _formatPartialSize(String path) {
+    final size = File(path).lengthSync();
+    return _formatSize(size);
   }
 
   Future<void> _loadFiles() async {
@@ -57,16 +83,38 @@ class _DownloadScreenState extends State<DownloadScreen> {
     final client = conn.client;
     if (client == null) return;
 
+    final settings = context.read<SettingsService>();
+    final name = file.path.contains('\\')
+        ? file.path.split('\\').last
+        : file.path.split('/').last;
+    final localPath = '${settings.downloadDir}/$name';
+    final localFile = File(localPath);
+    if (localFile.existsSync() && localFile.lengthSync() >= file.size && file.size > 0) {
+      final transfer = context.read<TransferProvider>();
+      transfer.markDownloaded(file.path);
+      transfer.setDownloadState(TransferState.done);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('文件已存在: $localPath'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+
     final transfer = context.read<TransferProvider>();
+    _userCancelled = false;
     setState(() => _downloadingFilePath = file.path);
     conn.setTransferring(true);
     transfer.setDownloadState(TransferState.uploading);
 
     try {
-      final settings = context.read<SettingsService>();
       final savePath = await client.downloadFile(
         file.path,
         settings.downloadDir,
+        expectedSize: file.size,
         onProgress: (received, total) {
           if (total > 0) {
             transfer.setDownloadProgress((received / total).clamp(0.0, 1.0));
@@ -87,15 +135,22 @@ class _DownloadScreenState extends State<DownloadScreen> {
         ),
       );
     } catch (e) {
-      transfer.setDownloadError(e.toString());
-      _errorTimer?.cancel();
-      _errorTimer = Timer(const Duration(seconds: 5), () {
-        if (mounted) transfer.clearDownloadError();
-      });
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('下载失败: $e'), backgroundColor: Colors.red),
-      );
+      FileLogger.log('[_downloadFile] caught error: _userCancelled=$_userCancelled, error=$e');
+      if (_userCancelled) {
+        // User cancelled — don't show error, just reset state
+        FileLogger.log('[_downloadFile] user cancelled, setting idle');
+        transfer.setDownloadState(TransferState.idle);
+      } else {
+        transfer.setDownloadError(e.toString());
+        _errorTimer?.cancel();
+        _errorTimer = Timer(const Duration(seconds: 5), () {
+          if (mounted) transfer.clearDownloadError();
+        });
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('下载失败: $e'), backgroundColor: Colors.red),
+        );
+      }
     } finally {
       conn.setTransferring(false);
       if (mounted) setState(() => _downloadingFilePath = null);
@@ -129,19 +184,58 @@ class _DownloadScreenState extends State<DownloadScreen> {
       ),
       body: Column(
         children: [
-          if (busy) ...[
+          if (busy || transfer.downloadState == TransferState.paused) ...[
             LinearProgressIndicator(value: transfer.downloadProgress),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Row(
                 children: [
                   Expanded(
-                    child: Text('正在下载...',
+                    child: Text(
+                        transfer.isDownloadPaused ? '已暂停' : '正在下载...',
                         style: TextStyle(color: Colors.grey[600])),
                   ),
-                  if (transfer.downloadSpeedText.isNotEmpty)
+                  if (transfer.downloadSpeedText.isNotEmpty && !transfer.isDownloadPaused)
                     Text(transfer.downloadSpeedText,
                         style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    height: 28,
+                    child: TextButton(
+                      onPressed: () {
+                        final client = context.read<ConnectionProvider>().client;
+                        if (client == null) return;
+                        transfer.toggleDownloadPause();
+                        if (transfer.isDownloadPaused) {
+                          client.pauseDownload();
+                        } else {
+                          client.resumeDownload();
+                        }
+                      },
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        foregroundColor: transfer.isDownloadPaused ? Colors.green : Colors.orange,
+                        textStyle: const TextStyle(fontSize: 12),
+                      ),
+                      child: Text(transfer.isDownloadPaused ? '继续' : '暂停'),
+                    ),
+                  ),
+                  SizedBox(
+                    height: 28,
+                    child: TextButton(
+                      onPressed: () {
+                        FileLogger.log('[Cancel] setting _userCancelled=true, cancelling token');
+                        _userCancelled = true;
+                        context.read<ConnectionProvider>().client?.cancelDownload();
+                      },
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        foregroundColor: Colors.red,
+                        textStyle: const TextStyle(fontSize: 12),
+                      ),
+                      child: const Text('取消'),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -193,12 +287,27 @@ class _DownloadScreenState extends State<DownloadScreen> {
                           itemBuilder: (_, i) {
                             final file = transfer.files[i];
                             final isDownloading = _downloadingFilePath == file.path;
+                            final partialPath = _getPartialFilePath(file.path, file.size);
+                            final hasPartial = partialPath != null;
+                            final isDone = transfer.downloadedFiles.contains(file.path);
                             return ListTile(
-                              leading: const Icon(Icons.insert_drive_file,
-                                  color: Colors.blue),
+                              leading: Icon(
+                                isDone ? Icons.check_circle : Icons.insert_drive_file,
+                                color: isDone ? Colors.green : Colors.blue,
+                              ),
                               title: Text(file.name),
-                              subtitle: Text(_formatSize(file.size)),
-                              trailing: transfer.downloadedFiles.contains(file.path)
+                              subtitle: Text(
+                                hasPartial && !isDone
+                                    ? '可续传 · 已下载 ${_formatPartialSize(partialPath)} / ${_formatSize(file.size)}'
+                                    : _formatSize(file.size),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: hasPartial && !isDone
+                                      ? Colors.orange
+                                      : null,
+                                ),
+                              ),
+                              trailing: isDone
                                   ? const Icon(Icons.check_circle,
                                       color: Colors.green)
                                   : IconButton(
@@ -210,7 +319,14 @@ class _DownloadScreenState extends State<DownloadScreen> {
                                                   CircularProgressIndicator(
                                                       strokeWidth: 2),
                                             )
-                                          : const Icon(Icons.download),
+                                          : Icon(
+                                              hasPartial
+                                                  ? Icons.downloading
+                                                  : Icons.download,
+                                              color: hasPartial
+                                                  ? Colors.orange
+                                                  : null,
+                                            ),
                                       onPressed: (busy ||
                                               _downloadingFilePath != null)
                                           ? null

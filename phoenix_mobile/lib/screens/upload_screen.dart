@@ -101,6 +101,7 @@ class _UploadScreenState extends State<UploadScreen> {
             filePath: f.path!,
             fileSize: f.size,
             chunkSize: chunkSize,
+            shouldPause: () => transfer.isPaused,
             onProgress: (sent, total) {
               final current = sentBytes + sent;
               transfer.setProgress((current / totalBytes).clamp(0.0, 1.0));
@@ -232,7 +233,8 @@ class _UploadScreenState extends State<UploadScreen> {
                 ),
               ),
             const SizedBox(height: 16),
-            if (busy || transfer.state == TransferState.done) ...[
+            if (transfer.state == TransferState.uploading ||
+        transfer.state == TransferState.paused) ...[
               LinearProgressIndicator(value: transfer.progress),
               const SizedBox(height: 8),
               Row(
@@ -275,6 +277,21 @@ class _UploadScreenState extends State<UploadScreen> {
                       child: const Text('取消'),
                     ),
                   ),
+                ],
+              ),
+            ] else if (transfer.state == TransferState.confirming) ...[
+              const LinearProgressIndicator(),
+              const SizedBox(height: 8),
+              Text(transfer.statusText,
+                  style: TextStyle(color: Colors.grey[600])),
+            ] else if (transfer.state == TransferState.done) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.green, size: 20),
+                  const SizedBox(width: 8),
+                  Text(transfer.statusText,
+                      style: const TextStyle(color: Colors.green)),
                 ],
               ),
             ],
