@@ -45,6 +45,10 @@ dependencies:
   saf: ^1.0.4
   dtorrent_task_v2: ^0.4.6
 
+dependency_overrides:
+  dtorrent_task_v2:
+    path: packages/dtorrent_task_v2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

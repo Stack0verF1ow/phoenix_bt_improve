@@ -1,7 +1,5 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 
 import 'package:dtorrent_parser/dtorrent_parser.dart';
 import 'package:dtorrent_task_v2/dtorrent_task_v2.dart';
@@ -10,8 +8,6 @@ import 'package:flutter/foundation.dart';
 import '../utils/file_logger.dart';
 
 class BtDownloadService extends ChangeNotifier {
-  static const _peerIdPrefix = '-UT3560-';
-
   TorrentTask? _task;
   bool _running = false;
   double _progress = 0;
@@ -23,9 +19,7 @@ class BtDownloadService extends ChangeNotifier {
   bool _stopping = false;
 
   bool get stopping => _stopping;
-  List<Uri>? _trackerUrls;
   String? _infoHashHex;
-  String _peerId = '';
   int _startBytes = 0;
   DateTime _startTime = DateTime.now();
   String _savePath = '';
@@ -36,33 +30,6 @@ class BtDownloadService extends ChangeNotifier {
   String? get error => _error;
   String get currentName => _currentName;
   bool get completed => _completed;
-
-  static String _makePeerId() {
-    final rng = Random.secure();
-    final bytes = List<int>.generate(9, (_) => rng.nextInt(256));
-    return '$_peerIdPrefix${base64Encode(bytes)}';
-  }
-
-  Future<void> _sendTrackerEvent(String event) async {
-    if (_trackerUrls == null || _infoHashHex == null) return;
-    final client = HttpClient();
-    try {
-      for (final url in _trackerUrls!) {
-        final uri = Uri.parse(
-          '$url?info_hash=${Uri.encodeQueryComponent(_infoHashHex!)}'
-          '&peer_id=$_peerId'
-          '&port=0&uploaded=0&downloaded=0&left=0'
-          '&compact=1&event=$event',
-        );
-        try {
-          final req = await client.getUrl(uri);
-          await req.close();
-        } catch (_) {}
-      }
-    } finally {
-      client.close(force: true);
-    }
-  }
 
   Future<void> _wipeState() async {
     if (_infoHashHex == null || _savePath.isEmpty) return;
@@ -81,11 +48,9 @@ class BtDownloadService extends ChangeNotifier {
 
     final metaInfo = await Torrent.parseFromFile(torrentPath);
     _currentName = metaInfo.name;
-    _trackerUrls = metaInfo.announces.toList();
     _infoHashHex = metaInfo.infoHashBuffer
         .map((b) => b.toRadixString(16).padLeft(2, '0'))
         .join();
-    _peerId = _makePeerId();
 
     _running = true;
     _progress = 0;
@@ -137,7 +102,6 @@ class BtDownloadService extends ChangeNotifier {
             FileLogger.log('[BtDownload] task stopped, state file flushed');
             _stopping = false;
             _running = false;
-            _sendTrackerEvent('stopped');
             notifyListeners();
           });
           return;
