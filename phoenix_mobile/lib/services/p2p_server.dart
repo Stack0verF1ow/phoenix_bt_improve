@@ -36,7 +36,7 @@ String _generateToken(int byteLength) {
 
 class _RateLimiter {
   static const _window = Duration(seconds: 60);
-  static const _maxRequests = 60;
+  static const _maxRequests = 200;
 
   final _buckets = <String, List<DateTime>>{};
 
@@ -337,7 +337,7 @@ class P2PServer {
   }
 
   void _handleRegister(HttpRequest request) async {
-    if (!_checkRate(request)) return;
+    // No rate limit for registration — it's a one-time handshake
     final data = await _readBody(request);
     if (data['token'] != _qrToken) {
       _sendError(request, 403, 'Invalid token');

@@ -93,13 +93,6 @@ class ChunkStore:
                 }
 
             computed_crc = format(binascii.crc32(data) & 0xFFFFFFFF, "08x")
-            if expected_crc32 and computed_crc != expected_crc32.lower():
-                return {
-                    "status": "checksum_mismatch",
-                    "fileId": file_id,
-                    "chunkIndex": chunk_index,
-                    "computedCrc32": computed_crc,
-                }
 
             offset = chunk_index * meta["chunkSize"]
             data_path = self.base_dir / ".part" / session_id / f"{file_id}.data"

@@ -52,6 +52,7 @@ class TransferProvider extends ChangeNotifier {
   DateTime? _downloadStart;
   int _downloadLastBytes = 0;
   DateTime? _downloadLastSpeedUpdate;
+  bool _downloadPaused = false;
 
   // Files
   List<FileEntry> _files = [];
@@ -72,6 +73,7 @@ class TransferProvider extends ChangeNotifier {
   double get downloadProgress => _downloadProgress;
   String? get downloadError => _downloadError;
   String get downloadSpeedText => _downloadSpeedText;
+  bool get isDownloadPaused => _downloadPaused;
 
   // Files
   List<FileEntry> get files => _files;
@@ -177,6 +179,16 @@ class TransferProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  void toggleDownloadPause() {
+    _downloadPaused = !_downloadPaused;
+    if (_downloadPaused) {
+      _downloadState = TransferState.paused;
+    } else {
+      _downloadState = TransferState.uploading;
+    }
+    notifyListeners();
+  }
+
   void setDownloadProgress(double value) {
     _downloadProgress = value;
     notifyListeners();
@@ -199,6 +211,7 @@ class TransferProvider extends ChangeNotifier {
       _downloadError = null;
       _downloadSpeedText = '';
       _downloadStart = null;
+      _downloadPaused = false;
     }
     if (newState == TransferState.uploading) {
       _downloadStart = null;
