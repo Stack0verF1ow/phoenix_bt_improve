@@ -22,6 +22,7 @@ class TorrentProvider extends ChangeNotifier {
   bool _btSelectMode = false;
   bool _syncInProgress = false;
   Timer? _refreshTimer;
+  void Function(String name)? onDownloadCompleted;
 
   List<TorrentFile> get torrents => _torrents;
   bool get loading => _loading;
@@ -33,6 +34,7 @@ class TorrentProvider extends ChangeNotifier {
     _btService.addListener(() {
       FileLogger.log('[TorrentProvider] bt listener: running=${_btService.running} completed=${_btService.completed} stopping=${_btService.stopping}');
       if (_btService.completed) {
+        onDownloadCompleted?.call(_btService.currentName);
         _scheduleSync(const Duration(seconds: 2));
       } else if (!_btService.running && !_btService.stopping) {
         _scheduleSync(const Duration(seconds: 1));
@@ -87,14 +89,28 @@ class TorrentProvider extends ChangeNotifier {
               .map((b) => b.toRadixString(16).padLeft(2, '0'))
               .join();
           final statePath = '$savePath${Platform.pathSeparator}$hex.bt.state';
+          final dataPath = '$savePath${Platform.pathSeparator}${meta.name}';
           final stateFile = File(statePath);
-          final exists = await stateFile.exists();
-          if (exists) {
-            final complete = await TorrentFile.isStateFileComplete(statePath, meta.pieces.length);
-            status = complete ? TorrentStatus.completed : TorrentStatus.partial;
-            FileLogger.log('[syncTorrents] ${entity.uri.pathSegments.last}: stateFile exists, complete=$complete, pieces=${meta.pieces.length}');
+          final stateExists = await stateFile.exists();
+          // Single-file torrents save as a file, multi-file as a directory
+          final dataExists = await File(dataPath).exists() || await Directory(dataPath).exists();
+          if (stateExists) {
+            if (!dataExists) {
+              try { await stateFile.delete(); } catch (_) {}
+              FileLogger.log('[syncTorrents] ${entity.uri.pathSegments.last}: data missing, cleaned stale stateFile');
+            } else {
+              final complete = await TorrentFile.isStateFileComplete(statePath, meta.pieces.length);
+              status = complete ? TorrentStatus.completed : TorrentStatus.partial;
+              FileLogger.log('[syncTorrents] ${entity.uri.pathSegments.last}: stateFile exists, complete=$complete, pieces=${meta.pieces.length}');
+            }
           } else {
-            FileLogger.log('[syncTorrents] ${entity.uri.pathSegments.last}: no stateFile at $statePath');
+            if (dataExists) {
+              try { await Directory(dataPath).delete(recursive: true); } catch (_) {}
+              try { await File(dataPath).delete(); } catch (_) {}
+              FileLogger.log('[syncTorrents] ${entity.uri.pathSegments.last}: stateFile missing, cleaned data');
+            } else {
+              FileLogger.log('[syncTorrents] ${entity.uri.pathSegments.last}: no stateFile at $statePath');
+            }
           }
         } catch (e) {
           FileLogger.log('[syncTorrents] ${entity.uri.pathSegments.last}: error=$e');
