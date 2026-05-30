@@ -70,10 +70,7 @@ class _UploadScreenState extends State<UploadScreen> {
       final session = await client.prepareUpload(filesMap);
 
       transfer.setState(TransferState.uploading);
-      int totalBytes = 0;
-      for (final f in _selectedFiles) {
-        totalBytes += f.size;
-      }
+      int totalBytes = _selectedFiles.fold(0, (sum, f) => sum + f.size);
       int sentBytes = 0;
 
       for (int i = 0; i < _selectedFiles.length; i++) {
@@ -83,20 +80,54 @@ class _UploadScreenState extends State<UploadScreen> {
         if (token == null) continue;
 
         transfer.setStatus('正在上传: ${f.name}');
-        final bytes = await _readBytes(f);
-        final fileSentBefore = sentBytes;
-        await client.uploadFile(
-          sessionId: session.sessionId,
-          fileId: fid,
-          token: token,
-          bytes: bytes,
-          onProgress: (sent, total) {
-            final current = fileSentBefore + sent;
-            transfer.setProgress((current / totalBytes).clamp(0.0, 1.0));
-            transfer.updateUploadSpeed(current, totalBytes);
-          },
-        );
-        sentBytes += bytes.length;
+
+        if (f.path != null && f.size > 0) {
+          final chunkSize = session.chunkSize;
+          final totalChunks = (f.size + chunkSize - 1) ~/ chunkSize;
+          transfer.setChunkedState(ChunkedUploadState(
+            sessionId: session.sessionId,
+            fileId: fid,
+            token: token,
+            filePath: f.path!,
+            fileSize: f.size,
+            chunkSize: chunkSize,
+            totalChunks: totalChunks,
+          ));
+
+          await client.uploadFileChunked(
+            sessionId: session.sessionId,
+            fileId: fid,
+            token: token,
+            filePath: f.path!,
+            fileSize: f.size,
+            chunkSize: chunkSize,
+            onProgress: (sent, total) {
+              final current = sentBytes + sent;
+              transfer.setProgress((current / totalBytes).clamp(0.0, 1.0));
+              transfer.updateUploadSpeed(current, totalBytes);
+            },
+            onChunkComplete: (idx, total) {
+              transfer.setStatus('正在上传: ${f.name} (${idx + 1}/$total)');
+            },
+          );
+          transfer.setChunkedState(null);
+          sentBytes += f.size;
+        } else {
+          final bytes = await _readBytes(f);
+          final fileSentBefore = sentBytes;
+          await client.uploadFile(
+            sessionId: session.sessionId,
+            fileId: fid,
+            token: token,
+            bytes: bytes,
+            onProgress: (sent, total) {
+              final current = fileSentBefore + sent;
+              transfer.setProgress((current / totalBytes).clamp(0.0, 1.0));
+              transfer.updateUploadSpeed(current, totalBytes);
+            },
+          );
+          sentBytes += bytes.length;
+        }
         transfer.setProgress((sentBytes / totalBytes).clamp(0.0, 1.0));
       }
 
@@ -117,10 +148,14 @@ class _UploadScreenState extends State<UploadScreen> {
       );
       Navigator.of(context).pop();
     } catch (e) {
-      transfer.setError(e.toString());
+      final t = context.read<TransferProvider>();
+      if (t.chunkedState?.isPaused == true) {
+        return;
+      }
+      t setError(e.toString());
       _errorTimer?.cancel();
       _errorTimer = Timer(const Duration(seconds: 5), () {
-        if (mounted) transfer.clearUploadError();
+        if (mounted) t.clearUploadError();
       });
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -144,7 +179,8 @@ class _UploadScreenState extends State<UploadScreen> {
     final transfer = context.watch<TransferProvider>();
     final busy = transfer.state == TransferState.preparing ||
         transfer.state == TransferState.uploading ||
-        transfer.state == TransferState.confirming;
+        transfer.state == TransferState.confirming ||
+        transfer.state == TransferState.paused;
 
     return Scaffold(
       appBar: AppBar(title: const Text('上传到电脑')),
@@ -208,6 +244,37 @@ class _UploadScreenState extends State<UploadScreen> {
                   if (transfer.speedText.isNotEmpty)
                     Text(transfer.speedText,
                         style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+                  const SizedBox(width: 8),
+                  if (transfer.state == TransferState.uploading ||
+                      transfer.state == TransferState.paused) ...[
+                    SizedBox(
+                      height: 28,
+                      child: TextButton(
+                        onPressed: () => transfer.togglePause(),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          foregroundColor: transfer.isPaused ? Colors.green : Colors.orange,
+                          textStyle: const TextStyle(fontSize: 12),
+                        ),
+                        child: Text(transfer.isPaused ? '继续' : '暂停'),
+                      ),
+                    ),
+                  ],
+                  SizedBox(
+                    height: 28,
+                    child: TextButton(
+                      onPressed: () {
+                        context.read<ConnectionProvider>().client?.cancelUpload();
+                        context.read<TransferProvider>().setState(TransferState.idle);
+                      },
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        foregroundColor: Colors.red,
+                        textStyle: const TextStyle(fontSize: 12),
+                      ),
+                      child: const Text('取消'),
+                    ),
+                  ),
                 ],
               ),
             ],
