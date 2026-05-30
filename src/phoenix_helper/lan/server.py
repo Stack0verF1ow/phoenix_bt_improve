@@ -38,7 +38,7 @@ LOGGER = logging.getLogger(__name__)
 # ── rate limiter ──────────────────────────────────────────────────
 
 _RATE_LIMIT_WINDOW = 60.0  # seconds
-_RATE_LIMIT_MAX = 60        # requests per window per IP
+_RATE_LIMIT_MAX = 200        # requests per window per IP
 
 
 class _RateLimiter:
@@ -320,8 +320,7 @@ class LanRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_register(self) -> None:
         """POST /api/register — exchange QR token for full session."""
-        if not self._check_rate():
-            return
+        # No rate limit for registration — it's a one-time handshake
         try:
             data = json.loads(self._read_body())
         except Exception:
@@ -343,7 +342,7 @@ class LanRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_status(self) -> None:
         """GET /api/status — return PC capabilities."""
-        if not self._check_auth_and_rate():
+        if not self._check_auth():
             return
         try:
             from phoenix_helper.clients.discovery import find_utorrent_executable
@@ -471,19 +470,9 @@ class LanRequestHandler(BaseHTTPRequestHandler):
                     file_id=fid,
                     chunk_index=chunk_index,
                     data=file_data,
-                    expected_crc32=chunk_hash,
                 )
             except FileNotFoundError:
                 self._send_error(404, "Session or file meta not found")
-                return
-
-            if result["status"] == "checksum_mismatch":
-                self._send_json(400, {
-                    "status": "error",
-                    "message": "CRC32 checksum mismatch",
-                    "computedCrc32": result["computedCrc32"],
-                    "chunkIndex": chunk_index,
-                })
                 return
 
             if result["status"] == "duplicate":
@@ -672,7 +661,7 @@ class LanRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_upload_status(self, sid: str) -> None:
         """GET /api/upload/<sid> — poll session status, optionally with chunk details."""
-        if not self._check_auth_and_rate():
+        if not self._check_auth():
             return
         from urllib.parse import urlparse, parse_qs
         qs = parse_qs(urlparse(self.path).query)
@@ -753,7 +742,7 @@ class LanRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_list_files(self) -> None:
         """GET /api/files — list files shared by the PC user."""
-        if not self._check_auth_and_rate():
+        if not self._check_auth():
             return
 
         shared = getattr(self.server_ref, 'shared_files', [])

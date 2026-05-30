@@ -6,7 +6,10 @@ set -e
 
 export PUB_HOSTED_URL=https://pub.flutter-io.cn
 export FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn
-export PUB_CACHE="${PUB_CACHE:-C:/pub-cache}"
+# PUB_CACHE must be on same drive as BUILD_DIR (D:) to avoid Kotlin
+# incremental compilation cross-drive root path error:
+#   IllegalArgumentException: this and base files have different roots
+export PUB_CACHE="${PUB_CACHE:-D:/pub-cache}"
 export GRADLE_USER_HOME="${GRADLE_USER_HOME:-C:/gradle-cache}"
 export FLUTTER_ROOT="${FLUTTER_ROOT:-E:/flutter}"
 

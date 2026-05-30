@@ -11,8 +11,6 @@ import '../services/settings_service.dart';
 
 enum _SortMode { name, date, size }
 
-/// Source filter flags (bitfield-style, combined via | ).
-/// We store them as a simple bool per flag — checkboxes not radio.
 class _SourceFilter {
   bool bt = true;
   bool pc = true;
@@ -37,6 +35,8 @@ class _DownloadedFilesScreenState extends State<DownloadedFilesScreen> {
   _SortMode _sortMode = _SortMode.date;
   bool _sortAsc = false;
   final _sourceFilter = _SourceFilter();
+  bool _selectMode = false;
+  final Set<String> _selectedPaths = {};
 
   @override
   void initState() {
@@ -88,12 +88,10 @@ class _DownloadedFilesScreenState extends State<DownloadedFilesScreen> {
 
   void _applyFilterAndSort() {
     var files = _allFiles.where((e) {
-      // Search filter
       if (_searchQuery.isNotEmpty) {
         final name = e.uri.pathSegments.last.toLowerCase();
         if (!name.contains(_searchQuery.toLowerCase())) return false;
       }
-      // Source filter
       if (!_sourceFilter.all) {
         final path = e.path.replaceAll('\\', '/');
         final isBt = path.contains('/bt_downloads/');
@@ -132,6 +130,48 @@ class _DownloadedFilesScreenState extends State<DownloadedFilesScreen> {
     setState(() { _searchQuery = value; _applyFilterAndSort(); });
   }
 
+  void _toggleSelectMode() {
+    setState(() {
+      _selectMode = !_selectMode;
+      if (!_selectMode) _selectedPaths.clear();
+    });
+  }
+
+  void _toggleSelection(String path) {
+    setState(() {
+      if (_selectedPaths.contains(path)) {
+        _selectedPaths.remove(path);
+      } else {
+        _selectedPaths.add(path);
+      }
+    });
+  }
+
+  Future<void> _deleteSelected() async {
+    if (_selectedPaths.isEmpty) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('批量删除'),
+        content: Text('确定删除选中的 ${_selectedPaths.length} 个文件？'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    for (final path in _selectedPaths) {
+      try { await File(path).delete(); } catch (_) {}
+    }
+    _selectedPaths.clear();
+    _selectMode = false;
+    _scanFiles();
+  }
+
   static const _channel = MethodChannel('com.phoenixhelper/file_ops');
 
   static const _archiveMimes = {
@@ -145,11 +185,9 @@ class _DownloadedFilesScreenState extends State<DownloadedFilesScreen> {
   void _openFile(File file) {
     final name = file.uri.pathSegments.last;
     final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
-
     if (Platform.isAndroid && _archiveMimes.containsKey(ext)) {
       _channel.invokeMethod('openFileWithMime', {
-        'path': file.path,
-        'mime': _archiveMimes[ext],
+        'path': file.path, 'mime': _archiveMimes[ext],
       }).catchError((_) => OpenFilex.open(file.path));
     } else {
       OpenFilex.open(file.path);
@@ -163,9 +201,8 @@ class _DownloadedFilesScreenState extends State<DownloadedFilesScreen> {
   void _openFileManager() {
     final dir = context.read<SettingsService>().downloadDir;
     if (Platform.isAndroid) {
-      _channel.invokeMethod('openFolder', {'path': dir}).catchError((_) {
-        OpenFilex.open(dir);
-      });
+      _channel.invokeMethod('openFolder', {'path': dir})
+          .catchError((_) => OpenFilex.open(dir));
     } else {
       OpenFilex.open(dir);
     }
@@ -214,10 +251,8 @@ class _DownloadedFilesScreenState extends State<DownloadedFilesScreen> {
       ),
     );
     if (confirm != true) return;
-    try {
-      await file.delete();
-      _scanFiles();
-    } catch (e) {
+    try { await file.delete(); _scanFiles(); }
+    catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('删除失败: $e'), backgroundColor: Colors.red),
@@ -233,18 +268,15 @@ class _DownloadedFilesScreenState extends State<DownloadedFilesScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.open_in_new),
-              title: const Text('打开'),
+              leading: const Icon(Icons.open_in_new), title: const Text('打开'),
               onTap: () { Navigator.pop(ctx); _openFile(file); },
             ),
             ListTile(
-              leading: const Icon(Icons.share),
-              title: const Text('分享'),
+              leading: const Icon(Icons.share), title: const Text('分享'),
               onTap: () { Navigator.pop(ctx); _shareFile(file); },
             ),
             ListTile(
-              leading: const Icon(Icons.drive_file_move),
-              title: const Text('移动到...'),
+              leading: const Icon(Icons.drive_file_move), title: const Text('移动到...'),
               onTap: () { Navigator.pop(ctx); _moveFile(file); },
             ),
             ListTile(
@@ -262,22 +294,38 @@ class _DownloadedFilesScreenState extends State<DownloadedFilesScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('已下载列表'),
+        title: Text(_selectMode ? '已选 ${_selectedPaths.length} 项' : '已下载列表'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.folder_open),
-            tooltip: '在文件管理器中打开',
-            onPressed: _openFileManager,
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _scanFiles,
-          ),
+          if (_selectMode) ...[
+            TextButton(
+              onPressed: _selectedPaths.isEmpty ? null : _deleteSelected,
+              child: Text('删除', style: TextStyle(
+                  color: _selectedPaths.isEmpty ? null : Colors.red)),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close),
+              onPressed: _toggleSelectMode,
+            ),
+          ] else ...[
+            IconButton(
+              icon: const Icon(Icons.checklist),
+              tooltip: '批量选择',
+              onPressed: _toggleSelectMode,
+            ),
+            IconButton(
+              icon: const Icon(Icons.folder_open),
+              tooltip: '在文件管理器中打开',
+              onPressed: _openFileManager,
+            ),
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: _scanFiles,
+            ),
+          ],
         ],
       ),
       body: Column(
         children: [
-          // Search bar
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
             child: TextField(
@@ -298,48 +346,30 @@ class _DownloadedFilesScreenState extends State<DownloadedFilesScreen> {
               onChanged: _onSearch,
             ),
           ),
-          // Source filter chips
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: Wrap(
               spacing: 6,
               children: [
-                FilterChip(
-                  label: const Text('全部', style: TextStyle(fontSize: 12)),
+                FilterChip(label: const Text('全部', style: TextStyle(fontSize: 12)),
                   selected: _sourceFilter.all,
-                  onSelected: (_) {
-                    setState(() { _sourceFilter.setAll(); _applyFilterAndSort(); });
-                  },
-                  visualDensity: VisualDensity.compact,
-                ),
-                FilterChip(
-                  label: const Text('种子下载', style: TextStyle(fontSize: 12)),
+                  onSelected: (_) { setState(() { _sourceFilter.setAll(); _applyFilterAndSort(); }); },
+                  visualDensity: VisualDensity.compact,),
+                FilterChip(label: const Text('种子下载', style: TextStyle(fontSize: 12)),
                   selected: _sourceFilter.bt,
-                  onSelected: (v) {
-                    setState(() { _sourceFilter.bt = v; _applyFilterAndSort(); });
-                  },
-                  visualDensity: VisualDensity.compact,
-                ),
-                FilterChip(
-                  label: const Text('电脑下载', style: TextStyle(fontSize: 12)),
+                  onSelected: (v) { setState(() { _sourceFilter.bt = v; _applyFilterAndSort(); }); },
+                  visualDensity: VisualDensity.compact,),
+                FilterChip(label: const Text('电脑下载', style: TextStyle(fontSize: 12)),
                   selected: _sourceFilter.pc,
-                  onSelected: (v) {
-                    setState(() { _sourceFilter.pc = v; _applyFilterAndSort(); });
-                  },
-                  visualDensity: VisualDensity.compact,
-                ),
-                FilterChip(
-                  label: const Text('接收文件', style: TextStyle(fontSize: 12)),
+                  onSelected: (v) { setState(() { _sourceFilter.pc = v; _applyFilterAndSort(); }); },
+                  visualDensity: VisualDensity.compact,),
+                FilterChip(label: const Text('接收文件', style: TextStyle(fontSize: 12)),
                   selected: _sourceFilter.received,
-                  onSelected: (v) {
-                    setState(() { _sourceFilter.received = v; _applyFilterAndSort(); });
-                  },
-                  visualDensity: VisualDensity.compact,
-                ),
+                  onSelected: (v) { setState(() { _sourceFilter.received = v; _applyFilterAndSort(); }); },
+                  visualDensity: VisualDensity.compact,),
               ],
             ),
           ),
-          // Sort bar
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             child: Row(
@@ -358,7 +388,6 @@ class _DownloadedFilesScreenState extends State<DownloadedFilesScreen> {
               ],
             ),
           ),
-          // File list
           Expanded(child: _loading
               ? const Center(child: CircularProgressIndicator())
               : _filteredFiles.isEmpty
@@ -375,22 +404,51 @@ class _DownloadedFilesScreenState extends State<DownloadedFilesScreen> {
                   : RefreshIndicator(
                       onRefresh: _scanFiles,
                       child: ListView.builder(
-                        itemCount: _filteredFiles.length,
+                        itemCount: _filteredFiles.length + (_selectMode ? 1 : 0),
                         itemBuilder: (_, i) {
-                          final entity = _filteredFiles[i];
+                          if (_selectMode && i == 0) {
+                            return CheckboxListTile(
+                              title: const Text('全选'),
+                              value: _selectedPaths.length == _filteredFiles.length,
+                              onChanged: (_) {
+                                setState(() {
+                                  if (_selectedPaths.length == _filteredFiles.length) {
+                                    _selectedPaths.clear();
+                                  } else {
+                                    for (final e in _filteredFiles) {
+                                      _selectedPaths.add(e.path);
+                                    }
+                                  }
+                                });
+                              },
+                              controlAffinity: ListTileControlAffinity.leading,
+                            );
+                          }
+                          final idx = _selectMode ? i - 1 : i;
+                          final entity = _filteredFiles[idx];
                           if (entity is! File) return const SizedBox.shrink();
                           final stat = entity.statSync();
                           final name = entity.uri.pathSegments.last;
                           final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
+                          final isSelected = _selectedPaths.contains(entity.path);
                           return ListTile(
-                            leading: Icon(_iconForExt(ext), color: _colorForExt(ext)),
+                            leading: _selectMode
+                                ? Checkbox(
+                                    value: isSelected,
+                                    onChanged: (_) => _toggleSelection(entity.path),
+                                  )
+                                : Icon(_iconForExt(ext), color: _colorForExt(ext)),
                             title: Text(name, maxLines: 2, overflow: TextOverflow.ellipsis),
                             subtitle: Text(
                               '${_formatSize(stat.size)}  ${_formatTime(stat.modified)}',
                               style: TextStyle(color: Colors.grey[500], fontSize: 12),
                             ),
-                            onTap: () => _openFile(entity),
-                            onLongPress: () => _showActions(entity),
+                            onTap: _selectMode
+                                ? () => _toggleSelection(entity.path)
+                                : () => _openFile(entity),
+                            onLongPress: _selectMode
+                                ? null
+                                : () => _showActions(entity),
                           );
                         },
                       ),
