@@ -95,7 +95,7 @@ class _ScanScreenState extends State<ScanScreen> {
             left: 0,
             right: 0,
             child: Text(
-              '扫描电脑上的 PHX:// 二维码',
+              '扫描设备上的 PHX:// 二维码',
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.9),

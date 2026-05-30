@@ -58,8 +58,8 @@ class ServerProvider extends ChangeNotifier {
     // Get receive directory
     String receiveDir;
     if (Platform.isAndroid || Platform.isIOS) {
-      final dir = await getApplicationDocumentsDirectory();
-      receiveDir = '${dir.path}${Platform.pathSeparator}received';
+      final dir = await getExternalStorageDirectory();
+      receiveDir = '${(dir?.path ?? (await getApplicationDocumentsDirectory()).path)}${Platform.pathSeparator}received';
     } else {
       receiveDir = '${Directory.current.path}${Platform.pathSeparator}received';
     }

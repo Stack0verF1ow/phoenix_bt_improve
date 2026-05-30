@@ -54,16 +54,16 @@ class TorrentProvider extends ChangeNotifier {
 
   Future<String> get torrentDir async {
     if (_torrentDir != null) return _torrentDir!;
-    final appDir = await getApplicationDocumentsDirectory();
-    final dir = Directory('${appDir.path}${Platform.pathSeparator}torrents');
+    final appDir = await getExternalStorageDirectory();
+    final dir = Directory('${(appDir?.path ?? (await getApplicationDocumentsDirectory()).path)}${Platform.pathSeparator}torrents');
     if (!dir.existsSync()) await dir.create(recursive: true);
     _torrentDir = dir.path;
     return _torrentDir!;
   }
 
   Future<String> _btSavePath() async {
-    final appDir = await getApplicationDocumentsDirectory();
-    return '${appDir.path}${Platform.pathSeparator}bt_downloads';
+    final appDir = await getExternalStorageDirectory();
+    return '${(appDir?.path ?? (await getApplicationDocumentsDirectory()).path)}${Platform.pathSeparator}bt_downloads';
   }
 
   Future<void> syncTorrents() async {
