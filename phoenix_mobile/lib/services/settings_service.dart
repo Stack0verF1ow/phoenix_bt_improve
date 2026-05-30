@@ -14,10 +14,10 @@ class SettingsService {
 
   Future<void> load() async {
     _prefs = await SharedPreferences.getInstance();
-    // Resolve download directory: always use app documents dir (no permission issues)
     if (Platform.isAndroid) {
-      final dir = await getApplicationDocumentsDirectory();
-      _downloadDir = dir.path;
+      // Use external storage so files are accessible to file managers
+      final dir = await getExternalStorageDirectory();
+      _downloadDir = dir?.path ?? (await getApplicationDocumentsDirectory()).path;
     } else {
       final dir = await getApplicationDocumentsDirectory();
       _downloadDir = dir.path;

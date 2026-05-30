@@ -1,8 +1,8 @@
 package com.phoenixhelper.phoenix_mobile
 
-import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
+import android.os.StrictMode
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -13,20 +13,10 @@ class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.phoenixhelper/file_ops"
     private var pendingTorrentPath: String? = null
 
-    // Common built-in file manager package names
-    private val FILE_MANAGERS = listOf(
-        "com.android.documentsui",
-        "com.mi.android.globalFileexplorer",
-        "com.sec.android.app.myfiles",
-        "com.huawei.filemanager",
-        "com.coloros.filemanager",
-        "com.oneplus.filemanager",
-        "com.vivo.filemanager",
-        "com.google.android.apps.nbu.files",
-    )
-
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        // Allow file:// URIs in intents (needed for opening folders in file managers)
+        StrictMode.setVmPolicy(StrictMode.VmPolicy.Builder().build())
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "openFolder" -> {
@@ -91,28 +81,34 @@ class MainActivity : FlutterActivity() {
 
     private fun openFileManager(path: String) {
         val dir = File(path)
-        val uri = getUri(dir)
+        dir.mkdirs()
+        val fileUri = Uri.fromFile(dir)
 
-        for (pkg in FILE_MANAGERS) {
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "*/*")
-                setPackage(pkg)
+        // Try file:// URI — most file managers handle this natively
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(fileUri, "resource/folder")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            })
+            return
+        } catch (_: Exception) { }
+
+        // Try content:// URI
+        try {
+            val contentUri = getUri(dir)
+            startActivity(Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(contentUri, "resource/folder")
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            try {
-                startActivity(intent)
-                return
-            } catch (_: Exception) { }
-        }
+            })
+            return
+        } catch (_: Exception) { }
 
-        val fallback = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "*/*")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
+        // Fallback: system folder picker
         try {
-            startActivity(fallback)
+            startActivity(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            })
         } catch (_: Exception) { }
     }
 
