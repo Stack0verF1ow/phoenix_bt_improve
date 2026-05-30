@@ -8,6 +8,7 @@ class ServerStatus {
   final int maxUploadSize;
   final String deviceType; // 'pc' or 'phone'
   final bool canAutoSeed;
+  final int fileListVersion;
 
   ServerStatus({
     required this.name,
@@ -19,6 +20,7 @@ class ServerStatus {
     required this.maxUploadSize,
     this.deviceType = 'pc',
     this.canAutoSeed = false,
+    this.fileListVersion = 0,
   });
 
   factory ServerStatus.fromJson(Map<String, dynamic> json) {
@@ -32,6 +34,7 @@ class ServerStatus {
       maxUploadSize: json['max_upload_size'] as int? ?? 0,
       deviceType: json['device_type'] as String? ?? 'pc',
       canAutoSeed: json['can_auto_seed'] as bool? ?? false,
+      fileListVersion: json['fileListVersion'] as int? ?? 0,
     );
   }
 
