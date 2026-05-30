@@ -2,6 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
+
+import 'chunk_store.dart';
 
 /// Callback signatures.
 typedef FileReceivedCallback = void Function(String uploadId, String fileName);
@@ -33,7 +36,7 @@ String _generateToken(int byteLength) {
 
 class _RateLimiter {
   static const _window = Duration(seconds: 60);
-  static const _maxRequests = 60;
+  static const _maxRequests = 200;
 
   final _buckets = <String, List<DateTime>>{};
 
@@ -57,6 +60,7 @@ class _Session {
   final List<String> fileIds = [];
   final Map<String, String> fileTokens = {};
   final Map<String, List<int>> received = {};
+  final Set<String> chunkedFiles = {};
   String seedStatus = 'idle';
   final DateTime createdAt;
 
@@ -71,10 +75,18 @@ class _Session {
 class _SessionManager {
   final _sessions = <String, _Session>{};
   Timer? _cleanup;
+  void Function(String sessionId)? onSessionExpired;
 
   _SessionManager() {
     _cleanup = Timer.periodic(const Duration(seconds: 60), (_) {
-      _sessions.removeWhere((_, s) => s.isExpired);
+      final expired = _sessions.entries
+          .where((e) => e.value.isExpired)
+          .map((e) => e.key)
+          .toList();
+      for (final sid in expired) {
+        _sessions.remove(sid);
+        onSessionExpired?.call(sid);
+      }
     });
   }
 
@@ -160,6 +172,7 @@ class P2PServer {
   late final _RateLimiter _limiter;
   late final _SessionManager _sessions;
   late final _DeviceRegistry _devices;
+  late ChunkStore _chunkStore;
   final List<String> sharedFiles = [];
 
   P2PServer({
@@ -182,6 +195,10 @@ class P2PServer {
     _limiter = _RateLimiter();
     _sessions = _SessionManager();
     _devices = _DeviceRegistry();
+    _chunkStore = ChunkStore(baseDir: receiveDir);
+    _sessions.onSessionExpired = (sid) {
+      _chunkStore.cleanupSession(sid);
+    };
 
     // Ensure receive directory exists
     final dir = Directory(receiveDir);
@@ -242,6 +259,9 @@ class P2PServer {
         if (path == '/api/files') return _handleListFiles(request);
         if (path.startsWith('/api/files/download')) {
           return _handleDownload(request);
+        }
+        if (path.startsWith('/api/upload/')) {
+          return _handleUploadStatus(request);
         }
       } else if (request.method == 'POST') {
         if (path == '/api/register') return _handleRegister(request);
@@ -317,7 +337,7 @@ class P2PServer {
   }
 
   void _handleRegister(HttpRequest request) async {
-    if (!_checkRate(request)) return;
+    // No rate limit for registration — it's a one-time handshake
     final data = await _readBody(request);
     if (data['token'] != _qrToken) {
       _sendError(request, 403, 'Invalid token');
@@ -356,17 +376,35 @@ class P2PServer {
     final ip = request.connectionInfo?.remoteAddress.address ?? 'unknown';
     final session = _sessions.create(ip);
 
+    int? sessionChunkSize;
     for (final entry in files.entries) {
       final fid = entry.key;
       final info = entry.value as Map<String, dynamic>;
+      final chunkSize = info['chunkSize'] as int?;
       session.files[fid] = info;
       session.fileIds.add(fid);
       session.fileTokens[fid] = _generateToken(6);
+      if (chunkSize != null && chunkSize > 0) {
+        session.chunkedFiles.add(fid);
+        await _chunkStore.prepareFile(
+          sessionId: session.id,
+          fileId: fid,
+          fileName: info['name'] as String? ?? 'unknown',
+          fileSize: info['size'] as int? ?? 0,
+          fileType: info['type'] as String? ?? 'application/octet-stream',
+          fileToken: session.fileTokens[fid]!,
+          chunkSize: chunkSize,
+        );
+        sessionChunkSize ??= chunkSize;
+      }
     }
+
+    sessionChunkSize ??= _chunkStore.chunkSize;
 
     _sendJson(request, 200, {
       'sessionId': session.id,
       'fileTokens': session.fileTokens,
+      'chunkSize': sessionChunkSize,
       'expires_in': 600,
     });
   }
@@ -376,6 +414,9 @@ class P2PServer {
     final sid = request.uri.queryParameters['sessionId'] ?? '';
     final fid = request.uri.queryParameters['fileId'] ?? '';
     final token = request.uri.queryParameters['token'] ?? '';
+    final chunkIndexStr = request.uri.queryParameters['chunkIndex'];
+    final chunkHash = request.uri.queryParameters['chunkHash'];
+    final chunkIndex = chunkIndexStr != null ? int.tryParse(chunkIndexStr) : null;
 
     final session = _sessions.get(sid);
     if (session == null) {
@@ -392,12 +433,63 @@ class P2PServer {
     }
 
     final fileInfo = session.files[fid] ?? {};
-    final totalSize = fileInfo['size'] as int? ?? 0;
     final fileName = fileInfo['name'] as String? ?? 'unknown';
+
+    // ── chunked upload path ──
+    if (session.chunkedFiles.contains(fid) && chunkIndex != null) {
+      final bodyBytes = await _readBodyBytes(request);
+      try {
+        final result = await _chunkStore.writeChunk(
+          sessionId: sid,
+          fileId: fid,
+          chunkIndex: chunkIndex,
+          data: Uint8List.fromList(bodyBytes),
+          expectedCrc32: chunkHash,
+        );
+        if (result.status == 'checksum_mismatch') {
+          _sendJson(request, 400, {
+            'status': 'error',
+            'message': 'CRC32 checksum mismatch',
+            'computedCrc32': result.computedCrc32,
+            'chunkIndex': chunkIndex,
+          });
+          return;
+        }
+        if (result.status == 'duplicate') {
+          _sendJson(request, 409, {
+            'status': 'duplicate',
+            'fileId': fid,
+            'chunkIndex': chunkIndex,
+            'chunksReceived': result.chunksReceived,
+            'totalChunks': result.totalChunks,
+          });
+          return;
+        }
+        onUploadProgress?.call(
+          fileName, session.files[fid]?['size'] as int? ?? 0,
+          session.files[fid]?['size'] as int? ?? 0,
+          session.received.length + session.chunkedFiles.length,
+          session.fileIds.length,
+        );
+        _sendJson(request, 200, {
+          'status': 'chunk_received',
+          'fileId': fid,
+          'chunkIndex': chunkIndex,
+          'chunksReceived': result.chunksReceived,
+          'totalChunks': result.totalChunks,
+        });
+        return;
+      } on FileNotFoundError {
+        _sendError(request, 404, 'Session or file meta not found');
+        return;
+      }
+    }
+
+    // ── legacy whole-file upload path ──
+    final totalSize = fileInfo['size'] as int? ?? 0;
     final filesDone = session.received.length;
     final filesTotal = session.files.length;
 
-    // Read body in chunks with progress
     final chunks = <int>[];
     int received = 0;
     await for (final chunk in request) {
@@ -428,28 +520,52 @@ class P2PServer {
 
     final uploads = <Map<String, dynamic>>[];
     final dir = Directory(receiveDir);
+    final fileHashes = (data['fileHashes'] as Map<String, dynamic>?) ?? {};
 
     for (final fid in session.fileIds) {
-      final fileData = session.received[fid];
-      if (fileData == null) continue;
-
       final fileInfo = session.files[fid] ?? {};
       final originalName = fileInfo['name'] as String? ?? 'file';
 
-      // Save to disk with unique name
-      final savePath = _uniquePath(dir, originalName);
-      await File(savePath).writeAsBytes(fileData);
+      if (session.chunkedFiles.contains(fid)) {
+        final expectedHash = fileHashes[fid] as String?;
+        final finalPath = await _chunkStore.finalizeFile(
+          sessionId: sid,
+          fileId: fid,
+          expectedSha256: expectedHash,
+        );
+        if (finalPath == null) {
+          _sendJson(request, 400, {
+            'status': 'error',
+            'message': "File '$fid' incomplete or integrity check failed",
+          });
+          return;
+        }
+        final fileSize = await File(finalPath).length();
+        final uploadId = _uuid();
+        uploads.add({
+          'uploadId': uploadId,
+          'name': originalName,
+          'size': fileSize,
+        });
+        onFileReceived?.call(uploadId, originalName);
+      } else {
+        final fileData = session.received[fid];
+        if (fileData == null) continue;
 
-      final uploadId = _uuid();
-      uploads.add({
-        'uploadId': uploadId,
-        'name': originalName,
-        'size': fileData.length,
-      });
+        final savePath = _uniquePath(dir, originalName);
+        await File(savePath).writeAsBytes(fileData);
 
-      onFileReceived?.call(uploadId, originalName);
+        final uploadId = _uuid();
+        uploads.add({
+          'uploadId': uploadId,
+          'name': originalName,
+          'size': fileData.length,
+        });
+        onFileReceived?.call(uploadId, originalName);
+      }
     }
 
+    await _chunkStore.cleanupSession(sid);
     _sessions.remove(sid);
 
     _sendJson(request, 200, {
@@ -501,19 +617,104 @@ class P2PServer {
 
     final fileName = path.split(Platform.pathSeparator).last;
     final fileSize = file.lengthSync();
+
+    // Parse Range header for resume support
+    int start = 0;
+    final rangeHeader = request.headers.value('range') ?? '';
+    if (rangeHeader.startsWith('bytes=')) {
+      try {
+        start = int.parse(rangeHeader.substring(6).split('-')[0]);
+        if (start >= fileSize) {
+          request.response
+            ..statusCode = 416
+            ..headers.set('Content-Range', 'bytes */$fileSize')
+            ..close();
+          return;
+        }
+      } catch (_) {
+        start = 0;
+      }
+    }
+
+    final contentLength = fileSize - start;
+    if (start > 0) {
+      request.response
+        ..statusCode = 206
+        ..headers.set('Content-Range', 'bytes $start-${fileSize - 1}/$fileSize');
+    } else {
+      request.response.statusCode = 200;
+    }
     request.response
-      ..statusCode = 200
       ..headers.set('Content-Type', 'application/octet-stream')
-      ..headers.set('Content-Length', fileSize.toString())
+      ..headers.set('Content-Length', contentLength.toString())
       ..headers.set('Content-Disposition', 'attachment; filename="$fileName"');
 
     int sent = 0;
-    final stream = file.openRead();
+    final stream = file.openRead(start);
     await for (final chunk in stream) {
       request.response.add(chunk);
       sent += chunk.length;
     }
     await request.response.close();
+  }
+
+  void _handleUploadStatus(HttpRequest request) async {
+    if (!_checkAuthAndRate(request)) return;
+    final pathSegments = request.uri.pathSegments;
+    final sid = pathSegments.isNotEmpty ? pathSegments.last : '';
+    final session = _sessions.get(sid);
+    if (session == null) {
+      _sendJson(request, 200, {'sessionId': sid, 'status': 'expired'});
+      return;
+    }
+
+    final fileId = request.uri.queryParameters['fileId'];
+    final token = request.uri.queryParameters['token'];
+
+    final base = <String, dynamic>{
+      'sessionId': sid,
+      'status': 'active',
+      'files_received': session.received.length + session.chunkedFiles.length,
+      'files_total': session.fileIds.length,
+      'seed_status': session.seedStatus,
+    };
+
+    if (fileId != null) {
+      if (token != session.fileTokens[fileId]) {
+        _sendError(request, 403, 'Invalid file token');
+        return;
+      }
+      final chunkStatus = await _chunkStore.getChunkStatus(sid, fileId);
+      base['file_chunks'] = chunkStatus != null
+          ? {fileId: chunkStatus}
+          : <String, dynamic>{};
+      _sendJson(request, 200, base);
+      return;
+    }
+
+    final received = <Map<String, dynamic>>[];
+    for (final fid in session.fileIds) {
+      if (session.chunkedFiles.contains(fid)) {
+        final chunkStatus = await _chunkStore.getChunkStatus(sid, fid);
+        received.add({
+          'fileId': fid,
+          'name': (session.files[fid]?['name'] as String?) ?? 'unknown',
+          'size': (session.files[fid]?['size'] as int?) ?? 0,
+          'chunked': true,
+          'chunksReceived': chunkStatus?['chunksReceived']?.length ?? 0,
+          'totalChunks': chunkStatus?['totalChunks'] ?? 0,
+        });
+      } else if (session.received.containsKey(fid)) {
+        received.add({
+          'fileId': fid,
+          'name': (session.files[fid]?['name'] as String?) ?? 'unknown',
+          'size': session.received[fid]!.length,
+          'chunked': false,
+        });
+      }
+    }
+    base['received'] = received;
+    _sendJson(request, 200, base);
   }
 
   void _handleDisconnect(HttpRequest request) async {

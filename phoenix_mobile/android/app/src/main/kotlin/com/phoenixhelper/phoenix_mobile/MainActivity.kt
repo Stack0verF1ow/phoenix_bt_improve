@@ -11,17 +11,18 @@ import java.io.File
 
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.phoenixhelper/file_ops"
+    private var pendingTorrentPath: String? = null
 
     // Common built-in file manager package names
     private val FILE_MANAGERS = listOf(
-        "com.android.documentsui",           // Stock Android (AOSP)
-        "com.mi.android.globalFileexplorer",  // MIUI (Xiaomi/Redmi)
-        "com.sec.android.app.myfiles",        // Samsung
-        "com.huawei.filemanager",             // Huawei
-        "com.coloros.filemanager",            // OPPO
-        "com.oneplus.filemanager",            // OnePlus
-        "com.vivo.filemanager",               // Vivo
-        "com.google.android.apps.nbu.files",  // Google Files
+        "com.android.documentsui",
+        "com.mi.android.globalFileexplorer",
+        "com.sec.android.app.myfiles",
+        "com.huawei.filemanager",
+        "com.coloros.filemanager",
+        "com.oneplus.filemanager",
+        "com.vivo.filemanager",
+        "com.google.android.apps.nbu.files",
     )
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -47,8 +48,44 @@ class MainActivity : FlutterActivity() {
                         result.error("INVALID_ARGS", "Path or mime is null", null)
                     }
                 }
+                "getPendingTorrent" -> {
+                    result.success(pendingTorrentPath)
+                    pendingTorrentPath = null
+                }
                 else -> result.notImplemented()
             }
+        }
+        // Check if started via .torrent file intent
+        checkTorrentIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        checkTorrentIntent(intent)
+    }
+
+    private fun checkTorrentIntent(intent: Intent?) {
+        if (intent == null) return
+        val uri = intent.data ?: return
+        val mime = intent.type ?: ""
+        if (mime != "application/x-bittorrent") return
+
+        // Copy the .torrent file to our torrents directory
+        try {
+            val fileName = uri.lastPathSegment ?: "incoming.torrent"
+            val destDir = File(filesDir, "torrents")
+            destDir.mkdirs()
+            val destFile = File(destDir, fileName)
+            if (!destFile.exists()) {
+                contentResolver.openInputStream(uri)?.use { input ->
+                    destFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            }
+            pendingTorrentPath = destFile.absolutePath
+        } catch (_: Exception) {
+            pendingTorrentPath = null
         }
     }
 
@@ -56,7 +93,6 @@ class MainActivity : FlutterActivity() {
         val dir = File(path)
         val uri = getUri(dir)
 
-        // Try each known file manager
         for (pkg in FILE_MANAGERS) {
             val intent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, "*/*")
@@ -67,12 +103,9 @@ class MainActivity : FlutterActivity() {
             try {
                 startActivity(intent)
                 return
-            } catch (_: Exception) {
-                // This file manager not installed, try next
-            }
+            } catch (_: Exception) { }
         }
 
-        // Fallback: generic chooser
         val fallback = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "*/*")
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -80,9 +113,7 @@ class MainActivity : FlutterActivity() {
         }
         try {
             startActivity(fallback)
-        } catch (_: Exception) {
-            // Last resort: OpenFilex will handle on Dart side
-        }
+        } catch (_: Exception) { }
     }
 
     private fun openFileWithMime(path: String, mimeType: String) {
@@ -97,7 +128,6 @@ class MainActivity : FlutterActivity() {
         try {
             startActivity(intent)
         } catch (_: Exception) {
-            // Fallback: let system decide
             val fallback = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, "*/*")
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

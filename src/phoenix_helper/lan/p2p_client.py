@@ -217,31 +217,61 @@ class P2PClient:
         save_dir: Path,
         on_progress: ProgressCallback | None = None,
     ) -> Path:
-        """GET /api/files/download — download a file from the remote device."""
+        """GET /api/files/download — download a file from the remote device.
+
+        Supports resume: if a partial file exists, sends a Range header to
+        continue from where it left off.
+        """
         if self._conn is None:
             raise RuntimeError("Not connected")
 
         import urllib.parse
+        filename = remote_path.split("/")[-1].split("\\")[-1]
+        save_path = save_dir / filename
+
+        # Check for existing partial file
+        existing_size = save_path.stat().st_size if save_path.exists() else 0
+
         path = f"/api/files/download?path={urllib.parse.quote(remote_path)}"
         headers = {"X-Device-Token": self._token or ""}
+        if existing_size > 0:
+            headers["Range"] = f"bytes={existing_size}-"
+
         self._conn.timeout = 600  # 10 min
         self._conn.request("GET", path, headers=headers)
 
         resp = self._conn.getresponse()
-        filename = remote_path.split("/")[-1].split("\\")[-1]
-        save_path = save_dir / filename
+        status = resp.status
 
-        total = int(resp.headers.get("Content-Length", 0))
-        received = 0
-        with open(save_path, "wb") as f:
-            while True:
-                chunk = resp.read(65536)
-                if not chunk:
-                    break
-                f.write(chunk)
-                received += len(chunk)
-                if on_progress:
-                    on_progress(received, total)
+        if status == 206:
+            # Resume: append to existing file
+            total_str = resp.headers.get("Content-Range", "")
+            total = int(total_str.split("/")[-1]) if "/" in total_str else 0
+            received = existing_size
+            with open(save_path, "ab") as f:
+                while True:
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    received += len(chunk)
+                    if on_progress:
+                        on_progress(received, total)
+        elif status == 200:
+            # Full download (server doesn't support Range or file changed)
+            total = int(resp.headers.get("Content-Length", 0))
+            received = 0
+            with open(save_path, "wb") as f:
+                while True:
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    received += len(chunk)
+                    if on_progress:
+                        on_progress(received, total)
+        else:
+            raise RuntimeError(f"Download failed with status {status}")
 
         return save_path
 
