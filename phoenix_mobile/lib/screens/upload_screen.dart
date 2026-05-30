@@ -152,7 +152,7 @@ class _UploadScreenState extends State<UploadScreen> {
       if (t.chunkedState?.isPaused == true) {
         return;
       }
-      t setError(e.toString());
+      t.setError(e.toString());
       _errorTimer?.cancel();
       _errorTimer = Timer(const Duration(seconds: 5), () {
         if (mounted) t.clearUploadError();
