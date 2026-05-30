@@ -26,12 +26,24 @@ class _DownloadScreenState extends State<DownloadScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadFiles());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadFiles();
+      context.read<ConnectionProvider>().onFilesChanged = _onFilesChanged;
+    });
+  }
+
+  void _onFilesChanged() {
+    if (!mounted) return;
+    _loadFiles();
   }
 
   @override
   void dispose() {
     _errorTimer?.cancel();
+    // Clean up callback to avoid stale references
+    try {
+      context.read<ConnectionProvider>().onFilesChanged = null;
+    } catch (_) {}
     super.dispose();
   }
 

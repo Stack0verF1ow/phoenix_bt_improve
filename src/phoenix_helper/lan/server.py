@@ -359,6 +359,7 @@ class LanRequestHandler(BaseHTTPRequestHandler):
             "max_upload_size": 10 * 1024 * 1024 * 1024,  # 10 GB hint
             "device_type": "pc",
             "can_auto_seed": True,
+            "fileListVersion": self.server_ref._file_list_version if self.server_ref else 0,
         })
 
     def _handle_prepare_upload(self) -> None:
@@ -873,6 +874,7 @@ class LanServer:
         self.serve_dirs: list[Path] | None = None
         self.shared_files: list[Path] = []
         self._full_token: str = ""
+        self._file_list_version: int = 0
 
     @property
     def is_running(self) -> bool:
@@ -912,20 +914,30 @@ class LanServer:
         LOGGER.info("QR token: %s", self.qr_token)
         return actual_port
 
-    def add_shared_files(self, paths: list[Path]) -> None:
-        """Add files to the shared file list (deduplicated)."""
+    def add_shared_files(self, paths: list[Path]) -> int:
+        """Add files to the shared file list (deduplicated). Returns count added."""
         existing = set(self.shared_files)
+        added = 0
         for p in paths:
             if p not in existing and p.is_file():
                 self.shared_files.append(p)
                 existing.add(p)
+                added += 1
+        if added:
+            self._file_list_version += 1
+        return added
 
     def remove_shared_file(self, path: Path) -> None:
         """Remove a file from the shared list."""
+        before = len(self.shared_files)
         self.shared_files = [f for f in self.shared_files if f != path]
+        if len(self.shared_files) != before:
+            self._file_list_version += 1
 
     def clear_shared_files(self) -> None:
-        self.shared_files.clear()
+        if self.shared_files:
+            self.shared_files.clear()
+            self._file_list_version += 1
 
     def stop(self) -> None:
         if self._server:
