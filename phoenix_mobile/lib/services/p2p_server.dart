@@ -466,8 +466,10 @@ class P2PServer {
           return;
         }
         onUploadProgress?.call(
-          fileName, session.received.length + session.chunkedFiles.length,
-          session.files.length, session.files.length,
+          fileName, session.files[fid]?['size'] as int? ?? 0,
+          session.files[fid]?['size'] as int? ?? 0,
+          session.received.length + session.chunkedFiles.length,
+          session.fileIds.length,
         );
         _sendJson(request, 200, {
           'status': 'chunk_received',
