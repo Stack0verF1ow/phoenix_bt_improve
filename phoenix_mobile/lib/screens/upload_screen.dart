@@ -183,8 +183,11 @@ class _UploadScreenState extends State<UploadScreen> {
         transfer.state == TransferState.confirming ||
         transfer.state == TransferState.paused;
 
+    final device = context.watch<ConnectionProvider>().device;
+    final isPC = device?.isPC ?? true;
+
     return Scaffold(
-      appBar: AppBar(title: const Text('上传到电脑')),
+      appBar: AppBar(title: Text(isPC ? '上传到电脑' : '上传到手机')),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(

@@ -15,22 +15,22 @@ class HomeScreen extends StatelessWidget {
         title: const Text('Phoenix Helper'),
         centerTitle: true,
       ),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           children: [
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
             Text(
               '选择操作',
               style: theme.textTheme.headlineSmall?.copyWith(
                 fontWeight: FontWeight.bold,
               ),
             ),
-            const SizedBox(height: 32),
+            const SizedBox(height: 20),
             _ActionCard(
               icon: Icons.qr_code_scanner,
-              title: '连接电脑',
-              subtitle: '扫码连接电脑，传输文件',
+              title: '扫码连接',
+              subtitle: '扫码连接电脑或其他手机，传输文件',
               color: Colors.blue,
               onTap: () => context.push('/scan'),
             ),
@@ -70,6 +70,7 @@ class HomeScreen extends StatelessWidget {
                 MaterialPageRoute(builder: (_) => const TorrentScreen()),
               ),
             ),
+            const SizedBox(height: 16),
           ],
         ),
       ),
