@@ -74,3 +74,15 @@ PS.md
 
 # Development docs (internal plans/specs)
 docs/superpowers/
+
+# Local build directories
+phx-build/
+
+# Local test and debug files
+phoenix_mobile/android/aliyun-mirror.init.gradle
+phoenix_mobile/lib/utils/
+查看种子的详细信息：*
+测试文件夹/
+测试文件50.exe
+遗留问题.md
+金凤助手/
