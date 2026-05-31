@@ -52,6 +52,7 @@ torrents/generated/
 torrents/final/
 *.resume
 *.fastresume
+*.torrent
 
 # OS and editor files
 .DS_Store
@@ -67,8 +68,9 @@ desktop.ini
 *.zip
 
 # Debug and test artifacts
-查看种子的详细信息：*
-测试文件*.torrent
-测试文件*.exe
-同学生成的种子.torrent
-*.zip
+*.html
+curl_response.html
+PS.md
+
+# Development docs (internal plans/specs)
+docs/superpowers/
