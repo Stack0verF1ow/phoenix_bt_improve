@@ -95,6 +95,7 @@ def main() -> int:
         "--exclude-module", "unittest",
         "--name", APP_NAME,
         "--paths", str(ROOT / "src"),
+        "--add-data", f"{ROOT / 'src' / 'phoenix_helper' / 'ui' / 'style.qss'};phoenix_helper/ui",
         "--hidden-import", "phoenix_helper.ui.main_window",
         str(ROOT / "scripts" / "run_app.py"),
     ]

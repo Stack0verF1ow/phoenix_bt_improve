@@ -236,7 +236,12 @@ class MainWindow(QMainWindow):
         self._refresh_quota()
 
     def _load_stylesheet(self) -> None:
-        qss_path = Path(__file__).parent / "style.qss"
+        import sys
+        if getattr(sys, 'frozen', False):
+            base = Path(sys._MEIPASS)
+        else:
+            base = Path(__file__).resolve().parents[2]
+        qss_path = base / "phoenix_helper" / "ui" / "style.qss"
         if qss_path.exists():
             self.setStyleSheet(qss_path.read_text(encoding="utf-8"))
 
