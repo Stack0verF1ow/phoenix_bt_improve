@@ -17,13 +17,9 @@ import 'services/settings_service.dart';
 
 final _router = GoRouter(
   initialLocation: '/',
-  redirect: (context, state) {
+  onException: (context, state, router) {
     // Ignore content:// and file:// URIs from Android intents
-    final loc = state.matchedLocation;
-    if (loc.startsWith('content://') || loc.startsWith('file://')) {
-      return '/';
-    }
-    return null;
+    router.go('/');
   },
   routes: [
     GoRoute(path: '/', builder: (_, __) => const HomeScreen()),
