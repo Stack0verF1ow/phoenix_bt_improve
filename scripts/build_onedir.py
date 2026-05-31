@@ -91,7 +91,6 @@ def main() -> int:
         "--exclude-module", "numpy",
         "--exclude-module", "pandas",
         "--exclude-module", "matplotlib",
-        "--exclude-module", "PIL",
         "--exclude-module", "tkinter",
         "--exclude-module", "unittest",
         "--name", APP_NAME,
