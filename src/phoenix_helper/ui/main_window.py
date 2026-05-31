@@ -32,7 +32,6 @@ from phoenix_helper.clients.utorrent import UTorrentClient, UTorrentConfig
 from phoenix_helper.config import AppConfig, load_app_config, save_app_config, user_config_path
 from phoenix_helper.models import ResourceDraft, format_size
 from phoenix_helper.phoenix.client import PhoenixClient
-from phoenix_helper.phoenix.discovery import discover_tracker_from_default_sample, discover_tracker_from_torrent
 from phoenix_helper.torrent.creator import create_torrent, recommended_piece_length
 from phoenix_helper.utils.paths import safe_filename, unique_path
 from phoenix_helper.ui.http_login_dialog import HttpLoginDialog
@@ -423,21 +422,6 @@ class MainWindow(QMainWindow):
         login_form.addRow("状态", login_actions)
         layout.addWidget(login_group)
 
-        # --- Tracker section ---
-        tracker_group = QGroupBox("Tracker")
-        tracker_form = QFormLayout(tracker_group)
-        self.tracker_input = QLineEdit(self.config.tracker_url)
-        tracker_actions = QHBoxLayout()
-        tracker_from_sample_button = QPushButton("从测试种子读取")
-        tracker_from_file_button = QPushButton("从文件读取")
-        tracker_from_sample_button.clicked.connect(self.fill_tracker_from_sample)
-        tracker_from_file_button.clicked.connect(self.fill_tracker_from_file)
-        tracker_actions.addWidget(self.tracker_input, 1)
-        tracker_actions.addWidget(tracker_from_sample_button)
-        tracker_actions.addWidget(tracker_from_file_button)
-        tracker_form.addRow("地址", tracker_actions)
-        layout.addWidget(tracker_group)
-
         # --- uTorrent section ---
         ut_group = QGroupBox("uTorrent 路径")
         ut_form = QFormLayout(ut_group)
@@ -469,7 +453,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(recv_group)
 
         # Auto-save on field edit
-        for line_edit in (self.tracker_input, self.utorrent_exe_input, self.receive_dir_input):
+        for line_edit in (self.utorrent_exe_input, self.receive_dir_input):
             line_edit.editingFinished.connect(lambda le=line_edit: self.save_settings(silent=True))
 
         layout.addStretch(1)
@@ -557,9 +541,6 @@ class MainWindow(QMainWindow):
     def start_seed(self) -> None:
         if self.draft is None:
             QMessageBox.warning(self, "缺少资源", "请先选择文件或文件夹。")
-            return
-        if not self.tracker_input.text().strip():
-            QMessageBox.warning(self, "缺少 Tracker", "请先在设置中填写金凤 Tracker 地址。")
             return
         if not self.compliance_checkbox.isChecked():
             QMessageBox.warning(self, "需要确认", "请先确认上传内容符合规则。")
@@ -686,32 +667,6 @@ class MainWindow(QMainWindow):
         if path:
             self.load_draft(Path(path))
 
-    def fill_tracker_from_sample(self) -> None:
-        try:
-            tracker = discover_tracker_from_default_sample()
-        except Exception as exc:
-            QMessageBox.warning(self, "读取 Tracker 失败", str(exc))
-            return
-        if not tracker:
-            QMessageBox.warning(self, "读取 Tracker 失败", "没有找到测试种子或测试种子不包含 Tracker。")
-            return
-        self.tracker_input.setText(tracker)
-        self.log("已从测试种子读取 Tracker。")
-        self.save_settings(silent=True)
-
-    def fill_tracker_from_file(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "选择已有种子", filter="Torrent (*.torrent);;All files (*)")
-        if not path:
-            return
-        try:
-            tracker = discover_tracker_from_torrent(Path(path))
-        except Exception as exc:
-            QMessageBox.warning(self, "读取 Tracker 失败", str(exc))
-            return
-        self.tracker_input.setText(tracker)
-        self.log(f"已从种子读取 Tracker：{Path(path).name}")
-        self.save_settings(silent=True)
-
     def browse_utorrent(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "选择 µTorrent 可执行文件", filter="Executable (*.exe);;All files (*)")
         if path:
@@ -771,7 +726,6 @@ class MainWindow(QMainWindow):
         self.log(f"设置已保存：{path}")
 
     def _sync_config_from_inputs(self) -> None:
-        self.config.tracker_url = self.tracker_input.text().strip()
         self.config.utorrent_executable = self.utorrent_exe_input.text().strip()
         recv_dir = self.receive_dir_input.text().strip()
         if recv_dir:

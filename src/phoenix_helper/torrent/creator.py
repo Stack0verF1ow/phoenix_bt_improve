@@ -26,8 +26,6 @@ def create_torrent(
 ) -> Path:
     source_path = source_path.expanduser().resolve()
     output_path = output_path.expanduser().resolve()
-    if not announce:
-        raise ValueError("announce tracker URL is required")
     if not source_path.exists():
         raise FileNotFoundError(source_path)
     if piece_length <= 0:
@@ -57,12 +55,13 @@ def create_torrent(
         ]
 
     metainfo: dict[bytes, BValue] = {
-        b"announce": announce.encode("utf-8"),
         b"creation date": int(time()),
         b"created by": created_by.encode("utf-8"),
         b"encoding": b"UTF-8",
         b"info": info,
     }
+    if announce:
+        metainfo[b"announce"] = announce.encode("utf-8")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(encode(metainfo))

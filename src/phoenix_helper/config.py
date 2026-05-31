@@ -14,7 +14,7 @@ from typing import Any
 class AppConfig:
     site_base_url: str = "http://phoenix.stu.edu.cn"
     upload_path: str = "/BT/upload.aspx"
-    tracker_url: str = "http://phoenix.stu.edu.cn:1198/announce"
+    tracker_url: str = ""
     username: str = ""
     password: str = ""
     cookie_header: str = ""
