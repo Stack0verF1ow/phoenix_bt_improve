@@ -57,15 +57,11 @@ class MainActivity : FlutterActivity() {
     private fun checkTorrentIntent(intent: Intent?) {
         if (intent == null) return
         val uri = intent.data ?: return
-        val mime = intent.type ?: ""
-        val isTorrent = mime == "application/x-bittorrent"
-            || uri.toString().endsWith(".torrent")
-            || uri.lastPathSegment?.endsWith(".torrent") == true
-        if (!isTorrent) return
 
-        // Copy the .torrent file to our torrents directory
+        // Accept any file — the Flutter side will validate if it's a torrent
+        // Copy the file to our torrents directory
         try {
-            val fileName = uri.lastPathSegment ?: "incoming.torrent"
+            val fileName = queryDisplayName(uri) ?: "incoming.torrent"
             val destDir = File(filesDir, "torrents")
             destDir.mkdirs()
             val destFile = File(destDir, fileName)
@@ -80,6 +76,19 @@ class MainActivity : FlutterActivity() {
         } catch (_: Exception) {
             pendingTorrentPath = null
         }
+    }
+
+    private fun queryDisplayName(uri: Uri): String? {
+        if (uri.scheme == "content") {
+            val cursor = contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    val idx = it.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0) return it.getString(idx)
+                }
+            }
+        }
+        return uri.lastPathSegment
     }
 
     private fun openFileManager(path: String) {
