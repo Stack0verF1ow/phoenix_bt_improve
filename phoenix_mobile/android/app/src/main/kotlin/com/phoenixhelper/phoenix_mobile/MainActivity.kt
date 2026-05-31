@@ -58,7 +58,10 @@ class MainActivity : FlutterActivity() {
         if (intent == null) return
         val uri = intent.data ?: return
         val mime = intent.type ?: ""
-        if (mime != "application/x-bittorrent") return
+        val isTorrent = mime == "application/x-bittorrent"
+            || uri.toString().endsWith(".torrent")
+            || uri.lastPathSegment?.endsWith(".torrent") == true
+        if (!isTorrent) return
 
         // Copy the .torrent file to our torrents directory
         try {

@@ -8,6 +8,8 @@ import 'package:saf/src/storage_access_framework/api.dart' as saf;
 import 'package:share_plus/share_plus.dart';
 
 import '../services/settings_service.dart';
+import '../theme/app_colors.dart';
+import '../utils/format_utils.dart';
 
 enum _SortMode { name, date, size }
 
@@ -440,7 +442,7 @@ class _DownloadedFilesScreenState extends State<DownloadedFilesScreen> {
                                 : Icon(_iconForExt(ext), color: _colorForExt(ext)),
                             title: Text(name, maxLines: 2, overflow: TextOverflow.ellipsis),
                             subtitle: Text(
-                              '${_formatSize(stat.size)}  ${_formatTime(stat.modified)}',
+                              '${formatSize(stat.size)}  ${_formatTime(stat.modified)}',
                               style: TextStyle(color: Colors.grey[500], fontSize: 12),
                             ),
                             onTap: _selectMode
@@ -493,10 +495,10 @@ class _DownloadedFilesScreenState extends State<DownloadedFilesScreen> {
     const video = {'mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv'};
     const audio = {'mp3', 'flac', 'wav', 'aac', 'ogg', 'm4a'};
     const image = {'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'};
-    if (video.contains(ext)) return Colors.purple;
-    if (audio.contains(ext)) return Colors.orange;
-    if (image.contains(ext)) return Colors.green;
-    return Colors.grey;
+    if (video.contains(ext)) return AppColors.video;
+    if (audio.contains(ext)) return AppColors.audio;
+    if (image.contains(ext)) return AppColors.image;
+    return AppColors.document;
   }
 
   static String _mimeTypeForExt(String ext) {
@@ -507,15 +509,6 @@ class _DownloadedFilesScreenState extends State<DownloadedFilesScreen> {
       'pdf': 'application/pdf', 'txt': 'text/plain', 'zip': 'application/zip',
     };
     return map[ext] ?? 'application/octet-stream';
-  }
-
-  static String _formatSize(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    if (bytes < 1024 * 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-    }
-    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
   }
 
   static String _formatTime(DateTime dt) {

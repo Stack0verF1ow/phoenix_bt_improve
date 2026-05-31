@@ -9,6 +9,7 @@ import '../providers/connection_provider.dart';
 import '../providers/transfer_provider.dart';
 import '../services/settings_service.dart';
 import '../utils/file_logger.dart';
+import '../utils/format_utils.dart';
 
 class DownloadScreen extends StatefulWidget {
   const DownloadScreen({super.key});
@@ -66,7 +67,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
 
   String _formatPartialSize(String path) {
     final size = File(path).lengthSync();
-    return _formatSize(size);
+    return formatSize(size);
   }
 
   Future<void> _loadFiles() async {
@@ -301,8 +302,8 @@ class _DownloadScreenState extends State<DownloadScreen> {
                               title: Text(file.name),
                               subtitle: Text(
                                 hasPartial && !isDone
-                                    ? '可续传 · 已下载 ${_formatPartialSize(partialPath)} / ${_formatSize(file.size)}'
-                                    : _formatSize(file.size),
+                                    ? '可续传 · 已下载 ${_formatPartialSize(partialPath)} / ${formatSize(file.size)}'
+                                    : formatSize(file.size),
                                 style: TextStyle(
                                   fontSize: 12,
                                   color: hasPartial && !isDone
@@ -345,9 +346,4 @@ class _DownloadScreenState extends State<DownloadScreen> {
     );
   }
 
-  String _formatSize(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-  }
 }

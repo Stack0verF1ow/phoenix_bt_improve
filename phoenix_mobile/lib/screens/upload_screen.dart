@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../providers/connection_provider.dart';
 import '../providers/transfer_provider.dart';
 import '../services/file_service.dart';
+import '../utils/format_utils.dart';
 
 class UploadScreen extends StatefulWidget {
   const UploadScreen({super.key});
@@ -211,7 +212,7 @@ class _UploadScreenState extends State<UploadScreen> {
                     leading: const Icon(Icons.insert_drive_file),
                     title: Text(_selectedFiles[i].name),
                     trailing: Text(
-                      _formatSize(_selectedFiles[i].size),
+                      formatSize(_selectedFiles[i].size),
                       style: TextStyle(color: Colors.grey[600], fontSize: 12),
                     ),
                   ),
@@ -338,11 +339,6 @@ class _UploadScreenState extends State<UploadScreen> {
     );
   }
 
-  String _formatSize(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-  }
 }
 
 class _SelectedFile {
