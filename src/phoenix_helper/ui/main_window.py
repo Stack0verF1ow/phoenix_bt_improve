@@ -215,6 +215,7 @@ class QuotaWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
+        self._load_stylesheet()
         self.setWindowTitle("金凤本地做种助手")
         self.resize(920, 720)
         self.setAcceptDrops(True)
@@ -235,11 +236,16 @@ class MainWindow(QMainWindow):
         self._update_login_status()
         self._refresh_quota()
 
+    def _load_stylesheet(self) -> None:
+        qss_path = Path(__file__).parent / "style.qss"
+        if qss_path.exists():
+            self.setStyleSheet(qss_path.read_text(encoding="utf-8"))
+
     def _build_ui(self) -> None:
         tabs = QTabWidget()
         tabs.addTab(self._build_main_tab(), "一键做种")
         tabs.addTab(self._build_settings_tab(), "设置")
-        tabs.addTab(self._build_lan_tab(), "LAN传输")
+        tabs.addTab(self._build_lan_tab(), "面对面传输")
         self.setCentralWidget(tabs)
 
     def _build_lan_tab(self) -> QWidget:
@@ -350,20 +356,7 @@ class MainWindow(QMainWindow):
         # Seed button
         action_layout = QHBoxLayout()
         self.seed_button = QPushButton("一键做种")
-        self.seed_button.setStyleSheet(
-            "QPushButton {"
-            "  background: #1976D2;"
-            "  color: white;"
-            "  border: none;"
-            "  border-radius: 4px;"
-            "  padding: 10px 32px;"
-            "  font-size: 15px;"
-            "  font-weight: bold;"
-            "}"
-            "QPushButton:hover { background: #1565C0; }"
-            "QPushButton:disabled { background: #BBDEFB; }"
-            "QPushButton:pressed { background: #0D47A1; }"
-        )
+        self.seed_button.setObjectName("seedBtn")
         self.seed_button.clicked.connect(self.start_seed)
         action_layout.addStretch(1)
         action_layout.addWidget(self.seed_button)

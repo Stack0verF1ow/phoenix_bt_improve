@@ -177,12 +177,13 @@ class LanTab(QWidget):
 
         ctrl_layout = QHBoxLayout()
         self.start_btn = QPushButton("启动服务")
-        self.start_btn.setStyleSheet(
-            "QPushButton { font-size: 14px; padding: 6px 20px; }"
-        )
+        self.start_btn.setObjectName("startBtn")
+        self.start_btn.setProperty("stopped", True)
         self.start_btn.clicked.connect(self._toggle_server)
         self.port_spin = QSpinBox()
         self.port_spin.setRange(1024, 65535)
+        self.port_spin.setFixedWidth(110)
+        self.port_spin.setAlignment(Qt.AlignCenter)
         self.port_spin.setValue(self.config.lan_port)
         ctrl_layout.addWidget(QLabel("端口："))
         ctrl_layout.addWidget(self.port_spin)
@@ -307,6 +308,9 @@ class LanTab(QWidget):
             self._poll_stop.set()
             self.server.stop()
             self.start_btn.setText("启动服务")
+            self.start_btn.setProperty("stopped", True)
+            self.start_btn.style().unpolish(self.start_btn)
+            self.start_btn.style().polish(self.start_btn)
             self.qr_widget.clear_qr()
             self.device_table.setRowCount(0)
             self._append_log("LAN 传输服务已停止")
@@ -316,6 +320,9 @@ class LanTab(QWidget):
                 actual_port = self.server.start(port)
                 self.config.lan_port = actual_port
                 self.start_btn.setText("停止服务")
+                self.start_btn.setProperty("stopped", False)
+                self.start_btn.style().unpolish(self.start_btn)
+                self.start_btn.style().polish(self.start_btn)
                 self._refresh_qr()
                 self._poll_stop.clear()
                 threading.Thread(target=self._poll_devices, daemon=True).start()
