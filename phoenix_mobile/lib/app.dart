@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import 'theme/app_theme.dart';
+
 import 'providers/connection_provider.dart';
 import 'providers/server_provider.dart';
 import 'providers/torrent_provider.dart';
@@ -15,6 +17,14 @@ import 'services/settings_service.dart';
 
 final _router = GoRouter(
   initialLocation: '/',
+  redirect: (context, state) {
+    // Ignore content:// and file:// URIs from Android intents
+    final loc = state.matchedLocation;
+    if (loc.startsWith('content://') || loc.startsWith('file://')) {
+      return '/';
+    }
+    return null;
+  },
   routes: [
     GoRoute(path: '/', builder: (_, __) => const HomeScreen()),
     GoRoute(path: '/scan', builder: (_, __) => const ScanScreen()),
@@ -40,16 +50,8 @@ class PhoenixHelperApp extends StatelessWidget {
       ],
       child: MaterialApp.router(
         title: 'Phoenix Helper',
-        theme: ThemeData(
-          colorSchemeSeed: Colors.blue,
-          useMaterial3: true,
-          brightness: Brightness.light,
-        ),
-        darkTheme: ThemeData(
-          colorSchemeSeed: Colors.blue,
-          useMaterial3: true,
-          brightness: Brightness.dark,
-        ),
+        theme: AppTheme.lightTheme(),
+        darkTheme: AppTheme.darkTheme(),
         routerConfig: _router,
         debugShowCheckedModeBanner: false,
       ),
